@@ -1,0 +1,28 @@
+From b3faa19c61a5a5385899a80bdd0d6a3052f1415a Mon Sep 17 00:00:00 2001
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Thu, 24 May 2018 16:11:30 +0200
+Subject: [PATCH] Disable tests/cc
+
+Some files in tests/cc/ don't compile on s390x. We can just disable
+them until a better fix is available: the build target are not
+installed anyway.
+
+---
+ tests/CMakeLists.txt | 1 -
+ 1 file changed, 1 deletion(-)
+
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+index 86abec9..48e9029 100644
+--- a/tests/CMakeLists.txt
++++ b/tests/CMakeLists.txt
+@@ -8,7 +8,6 @@ add_test(NAME style-check COMMAND ${CMAKE_SOURCE_DIR}/scripts/style-check.sh)
+ set_tests_properties(style-check PROPERTIES PASS_REGULAR_EXPRESSION ".*")
+ 
+ if(ENABLE_CLANG_JIT)
+-add_subdirectory(cc)
+ add_subdirectory(python)
+ add_subdirectory(lua)
+ endif()
+-- 
+2.13.6
+

@@ -1,0 +1,559 @@
+From c28fdc2ad6c6acbd6c61dc78a6c6e114572357a5 Mon Sep 17 00:00:00 2001
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Thu, 16 Aug 2018 14:58:56 +0200
+Subject: [PATCH] Fix tools for RHEL 7
+
+There some differences on RHEL 7 that make some tools fail. This patch
+fixes the following:
+ - missing /sys/kernel/debug/kprobes/blacklist file
+ - missing __vfs_read() function
+ - aio_read/write methods replaced by read/write_iter in file_operations
+ - changes in mnt_namespace structure
+ - change in finish_task_switch() argument list
+ - changes in sock_common struct
+ - missing TCP_NEW_SYN_RECV TCP state
+ - mm_page_alloc tracepoint returns page struct instead of PFN
+ - iocb argument removed from tcp_sendmsg()
+---
+ src/python/bcc/__init__.py |  7 +++++--
+ tools/btrfsdist.py         | 13 +++++++------
+ tools/btrfsslower.py       | 13 +++++++------
+ tools/cpudist.py           |  4 +++-
+ tools/ext4dist.py          | 11 ++++++-----
+ tools/ext4slower.py        | 13 +++++++------
+ tools/fileslower.py        | 13 +++++++++----
+ tools/memleak.py           | 12 ++++++++++--
+ tools/mountsnoop.py        |  9 ++++-----
+ tools/nfsslower.py         |  1 +
+ tools/offcputime.py        |  4 +++-
+ tools/offwaketime.py       |  4 +++-
+ tools/runqlat.py           |  2 +-
+ tools/runqslower.py        |  2 +-
+ tools/solisten.py          |  2 +-
+ tools/tcpsubnet.py         |  4 ++--
+ tools/tcptracer.py         |  9 ++++-----
+ tools/xfsdist.py           |  8 ++++----
+ tools/xfsslower.py         | 11 ++++++-----
+ 19 files changed, 84 insertions(+), 58 deletions(-)
+
+diff --git a/src/python/bcc/__init__.py b/src/python/bcc/__init__.py
+index 8f793aa..470ac49 100644
+--- a/src/python/bcc/__init__.py
++++ b/src/python/bcc/__init__.py
+@@ -500,8 +500,11 @@ DEBUG_BPF_REGISTER_STATE = 0x10
+ 
+     @staticmethod
+     def get_kprobe_functions(event_re):
+-        with open("%s/../kprobes/blacklist" % TRACEFS, "rb") as blacklist_f:
+-            blacklist = set([line.rstrip().split()[1] for line in blacklist_f])
++        try:
++            with open("%s/../kprobes/blacklist" % TRACEFS, "rb") as blacklist_f:
++                blacklist = set([line.rstrip().split()[1] for line in blacklist_f])
++        except:
++            blacklist = set()
+         fns = []
+ 
+         in_init_section = 0
+diff --git a/tools/btrfsdist.py b/tools/btrfsdist.py
+index 4659ab4..3326b67 100755
+--- a/tools/btrfsdist.py
++++ b/tools/btrfsdist.py
+@@ -60,6 +60,7 @@ debug = 0
+ bpf_text = """
+ #include <uapi/linux/ptrace.h>
+ #include <linux/fs.h>
++#include <linux/aio.h>
+ #include <linux/sched.h>
+ 
+ #define OP_NAME_LEN 8
+@@ -81,7 +82,7 @@ int trace_entry(struct pt_regs *ctx)
+     return 0;
+ }
+ 
+-// The current btrfs (Linux 4.5) uses generic_file_read_iter() instead of it's
++// btrfs uses generic_file_aio_read() instead of it's
+ // own read function. So we need to trace that and then filter on btrfs, which
+ // I do by checking file->f_op.
+ int trace_read_entry(struct pt_regs *ctx, struct kiocb *iocb)
+@@ -193,13 +194,13 @@ bpf_text = bpf_text.replace('FACTOR', str(factor))
+ # load BPF program
+ b = BPF(text=bpf_text)
+ 
+-# Common file functions. See earlier comment about generic_file_read_iter().
+-b.attach_kprobe(event="generic_file_read_iter", fn_name="trace_read_entry")
+-b.attach_kprobe(event="btrfs_file_write_iter", fn_name="trace_entry")
++# Common file functions. See earlier comment about generic_file_aio_read().
++b.attach_kprobe(event="generic_file_aio_read", fn_name="trace_read_entry")
++b.attach_kprobe(event="btrfs_file_aio_write", fn_name="trace_entry")
+ b.attach_kprobe(event="generic_file_open", fn_name="trace_open_entry")
+ b.attach_kprobe(event="btrfs_sync_file", fn_name="trace_entry")
+-b.attach_kretprobe(event="generic_file_read_iter", fn_name="trace_read_return")
+-b.attach_kretprobe(event="btrfs_file_write_iter", fn_name="trace_write_return")
++b.attach_kretprobe(event="generic_file_aio_read", fn_name="trace_read_return")
++b.attach_kretprobe(event="btrfs_file_aio_write", fn_name="trace_write_return")
+ b.attach_kretprobe(event="generic_file_open", fn_name="trace_open_return")
+ b.attach_kretprobe(event="btrfs_sync_file", fn_name="trace_fsync_return")
+ 
+diff --git a/tools/btrfsslower.py b/tools/btrfsslower.py
+index 644cb22..a720396 100755
+--- a/tools/btrfsslower.py
++++ b/tools/btrfsslower.py
+@@ -63,6 +63,7 @@ debug = 0
+ bpf_text = """
+ #include <uapi/linux/ptrace.h>
+ #include <linux/fs.h>
++#include <linux/aio.h>
+ #include <linux/sched.h>
+ #include <linux/dcache.h>
+ 
+@@ -97,7 +98,7 @@ BPF_PERF_OUTPUT(events);
+ // Store timestamp and size on entry
+ //
+ 
+-// The current btrfs (Linux 4.5) uses generic_file_read_iter() instead of it's
++// btrfs uses generic_file_aio_read() instead of it's
+ // own read function. So we need to trace that and then filter on btrfs, which
+ // I do by checking file->f_op.
+ int trace_read_entry(struct pt_regs *ctx, struct kiocb *iocb)
+@@ -124,7 +125,7 @@ int trace_read_entry(struct pt_regs *ctx, struct kiocb *iocb)
+     return 0;
+ }
+ 
+-// btrfs_file_write_iter():
++// btrfs_file_aio_write():
+ int trace_write_entry(struct pt_regs *ctx, struct kiocb *iocb)
+ {
+     u64 id = bpf_get_current_pid_tgid();
+@@ -327,12 +328,12 @@ TASK_COMM_LEN = 16      # linux/sched.h
+ b = BPF(text=bpf_text)
+ 
+ # Common file functions. See earlier comment about generic_*().
+-b.attach_kprobe(event="generic_file_read_iter", fn_name="trace_read_entry")
+-b.attach_kprobe(event="btrfs_file_write_iter", fn_name="trace_write_entry")
++b.attach_kprobe(event="generic_file_aio_read", fn_name="trace_read_entry")
++b.attach_kprobe(event="btrfs_file_aio_write", fn_name="trace_write_entry")
+ b.attach_kprobe(event="generic_file_open", fn_name="trace_open_entry")
+ b.attach_kprobe(event="btrfs_sync_file", fn_name="trace_fsync_entry")
+-b.attach_kretprobe(event="generic_file_read_iter", fn_name="trace_read_return")
+-b.attach_kretprobe(event="btrfs_file_write_iter", fn_name="trace_write_return")
++b.attach_kretprobe(event="generic_file_aio_read", fn_name="trace_read_return")
++b.attach_kretprobe(event="btrfs_file_aio_write", fn_name="trace_write_return")
+ b.attach_kretprobe(event="generic_file_open", fn_name="trace_open_return")
+ b.attach_kretprobe(event="btrfs_sync_file", fn_name="trace_fsync_return")
+ 
+diff --git a/tools/cpudist.py b/tools/cpudist.py
+index 4d7c9eb..ddb675e 100755
+--- a/tools/cpudist.py
++++ b/tools/cpudist.py
+@@ -94,7 +94,9 @@ static inline void update_hist(u32 tgid, u32 pid, u64 ts)
+     STORE
+ }
+ 
+-int sched_switch(struct pt_regs *ctx, struct task_struct *prev)
++struct rq;
++
++int sched_switch(struct pt_regs *ctx, struct rq *rq, struct task_struct *prev)
+ {
+     u64 ts = bpf_ktime_get_ns();
+     u64 pid_tgid = bpf_get_current_pid_tgid();
+diff --git a/tools/ext4dist.py b/tools/ext4dist.py
+index 227c138..f57cda8 100755
+--- a/tools/ext4dist.py
++++ b/tools/ext4dist.py
+@@ -60,6 +60,7 @@ debug = 0
+ bpf_text = """
+ #include <uapi/linux/ptrace.h>
+ #include <linux/fs.h>
++#include <linux/aio.h>
+ #include <linux/sched.h>
+ 
+ #define OP_NAME_LEN 8
+@@ -81,7 +82,7 @@ int trace_entry(struct pt_regs *ctx)
+     return 0;
+ }
+ 
+-// The current ext4 (Linux 4.5) uses generic_file_read_iter(), instead of it's
++// ext4 uses generic_file_aio_read(), instead of it's
+ // own function, for reads. So we need to trace that and then filter on ext4,
+ // which I do by checking file->f_op.
+ int trace_read_entry(struct pt_regs *ctx, struct kiocb *iocb)
+@@ -183,12 +184,12 @@ b = BPF(text=bpf_text)
+ if BPF.get_kprobe_functions('ext4_file_read_iter'):
+ 	b.attach_kprobe(event="ext4_file_read_iter", fn_name="trace_entry")
+ else:
+-	b.attach_kprobe(event="generic_file_read_iter", fn_name="trace_read_entry")
+-b.attach_kprobe(event="ext4_file_write_iter", fn_name="trace_entry")
++	b.attach_kprobe(event="generic_file_aio_read", fn_name="trace_read_entry")
++b.attach_kprobe(event="ext4_file_write", fn_name="trace_entry")
+ b.attach_kprobe(event="ext4_file_open", fn_name="trace_entry")
+ b.attach_kprobe(event="ext4_sync_file", fn_name="trace_entry")
+-b.attach_kretprobe(event="generic_file_read_iter", fn_name="trace_read_return")
+-b.attach_kretprobe(event="ext4_file_write_iter", fn_name="trace_write_return")
++b.attach_kretprobe(event="generic_file_aio_read", fn_name="trace_read_return")
++b.attach_kretprobe(event="ext4_file_write", fn_name="trace_write_return")
+ b.attach_kretprobe(event="ext4_file_open", fn_name="trace_open_return")
+ b.attach_kretprobe(event="ext4_sync_file", fn_name="trace_fsync_return")
+ 
+diff --git a/tools/ext4slower.py b/tools/ext4slower.py
+index eb6430e..276123f 100755
+--- a/tools/ext4slower.py
++++ b/tools/ext4slower.py
+@@ -64,6 +64,7 @@ debug = 0
+ bpf_text = """
+ #include <uapi/linux/ptrace.h>
+ #include <linux/fs.h>
++#include <linux/aio.h>
+ #include <linux/sched.h>
+ #include <linux/dcache.h>
+ 
+@@ -98,7 +99,7 @@ BPF_PERF_OUTPUT(events);
+ // Store timestamp and size on entry
+ //
+ 
+-// The current ext4 (Linux 4.5) uses generic_file_read_iter(), instead of it's
++// ext4 uses generic_file_aio_read(), instead of it's
+ // own function, for reads. So we need to trace that and then filter on ext4,
+ // which I do by checking file->f_op.
+ // The new Linux version (since form 4.10) uses ext4_file_read_iter(), And if the 'CONFIG_FS_DAX' 
+@@ -128,7 +129,7 @@ int trace_read_entry(struct pt_regs *ctx, struct kiocb *iocb)
+     return 0;
+ }
+ 
+-// ext4_file_write_iter():
++// ext4_file_write():
+ int trace_write_entry(struct pt_regs *ctx, struct kiocb *iocb)
+ {
+     u64 id = bpf_get_current_pid_tgid();
+@@ -328,15 +329,15 @@ b = BPF(text=bpf_text)
+ if BPF.get_kprobe_functions(b'ext4_file_read_iter'):
+     b.attach_kprobe(event="ext4_file_read_iter", fn_name="trace_read_entry")
+ else:
+-    b.attach_kprobe(event="generic_file_read_iter", fn_name="trace_read_entry")
+-b.attach_kprobe(event="ext4_file_write_iter", fn_name="trace_write_entry")
++    b.attach_kprobe(event="generic_file_aio_read", fn_name="trace_read_entry")
++b.attach_kprobe(event="ext4_file_write", fn_name="trace_write_entry")
+ b.attach_kprobe(event="ext4_file_open", fn_name="trace_open_entry")
+ b.attach_kprobe(event="ext4_sync_file", fn_name="trace_fsync_entry")
+ if BPF.get_kprobe_functions(b'ext4_file_read_iter'):
+     b.attach_kretprobe(event="ext4_file_read_iter", fn_name="trace_read_return")
+ else:
+-    b.attach_kretprobe(event="generic_file_read_iter", fn_name="trace_read_return")
+-b.attach_kretprobe(event="ext4_file_write_iter", fn_name="trace_write_return")
++    b.attach_kretprobe(event="generic_file_aio_read", fn_name="trace_read_return")
++b.attach_kretprobe(event="ext4_file_write", fn_name="trace_write_return")
+ b.attach_kretprobe(event="ext4_file_open", fn_name="trace_open_return")
+ b.attach_kretprobe(event="ext4_sync_file", fn_name="trace_fsync_return")
+ 
+diff --git a/tools/fileslower.py b/tools/fileslower.py
+index 5caa4ca..6af91af 100755
+--- a/tools/fileslower.py
++++ b/tools/fileslower.py
+@@ -124,7 +124,7 @@ int trace_read_entry(struct pt_regs *ctx, struct file *file,
+     char __user *buf, size_t count)
+ {
+     // skip non-sync I/O; see kernel code for __vfs_read()
+-    if (!(file->f_op->read_iter))
++    if (!(file->f_op->aio_read))
+         return 0;
+     return trace_rw_entry(ctx, file, buf, count);
+ }
+@@ -133,7 +133,7 @@ int trace_write_entry(struct pt_regs *ctx, struct file *file,
+     char __user *buf, size_t count)
+ {
+     // skip non-sync I/O; see kernel code for __vfs_write()
+-    if (!(file->f_op->write_iter))
++    if (!(file->f_op->aio_write))
+         return 0;
+     return trace_rw_entry(ctx, file, buf, count);
+ }
+@@ -200,8 +200,13 @@ b = BPF(text=bpf_text)
+ # do_sync_read/do_sync_write), but those became static. So trace these from
+ # the parent functions, at the cost of more overhead, instead.
+ # Ultimately, we should be using [V]FS tracepoints.
+-b.attach_kprobe(event="__vfs_read", fn_name="trace_read_entry")
+-b.attach_kretprobe(event="__vfs_read", fn_name="trace_read_return")
++try:
++    b.attach_kprobe(event="__vfs_read", fn_name="trace_read_entry")
++    b.attach_kretprobe(event="__vfs_read", fn_name="trace_read_return")
++except:
++    # older kernels don't have __vfs_read so try vfs_read instead
++    b.attach_kprobe(event="vfs_read", fn_name="trace_read_entry")
++    b.attach_kretprobe(event="vfs_read", fn_name="trace_read_return")
+ try:
+     b.attach_kprobe(event="__vfs_write", fn_name="trace_write_entry")
+     b.attach_kretprobe(event="__vfs_write", fn_name="trace_write_return")
+diff --git a/tools/memleak.py b/tools/memleak.py
+index 5d69538..3cf9ee0 100755
+--- a/tools/memleak.py
++++ b/tools/memleak.py
+@@ -354,13 +354,21 @@ TRACEPOINT_PROBE(kmem, kmem_cache_free) {
+         return gen_free_enter((struct pt_regs *)args, (void *)args->ptr);
+ }
+ 
++/*
++ * Upstream reads the PFN here, but on RHEL7 kernel this is not available
++ * and the address of the pages struct is returned instead. This value is
++ * used as the key in a hash to identify each allocation. No other allocation
++ * should return an address belonging to mem_map, so there's no risk of
++ * colision
++ */
++
+ TRACEPOINT_PROBE(kmem, mm_page_alloc) {
+         gen_alloc_enter((struct pt_regs *)args, PAGE_SIZE << args->order);
+-        return gen_alloc_exit2((struct pt_regs *)args, args->pfn);
++        return gen_alloc_exit2((struct pt_regs *)args, (size_t)args->page);
+ }
+ 
+ TRACEPOINT_PROBE(kmem, mm_page_free) {
+-        return gen_free_enter((struct pt_regs *)args, (void *)args->pfn);
++        return gen_free_enter((struct pt_regs *)args, (void *)args->page);
+ }
+ """
+ 
+diff --git a/tools/mountsnoop.py b/tools/mountsnoop.py
+index 2d0fa1a..bec8993 100755
+--- a/tools/mountsnoop.py
++++ b/tools/mountsnoop.py
+@@ -24,7 +24,6 @@ bpf_text = r"""
+ #include <linux/sched.h>
+ 
+ #include <linux/nsproxy.h>
+-#include <linux/ns_common.h>
+ 
+ /*
+  * XXX: struct mnt_namespace is defined in fs/mount.h, which is private to the
+@@ -34,7 +33,7 @@ bpf_text = r"""
+  */
+ struct mnt_namespace {
+     atomic_t count;
+-    struct ns_common ns;
++    unsigned int proc_inum;
+ };
+ 
+ /*
+@@ -69,7 +68,7 @@ struct data_t {
+     union {
+         /* EVENT_MOUNT, EVENT_UMOUNT */
+         struct {
+-            /* current->nsproxy->mnt_ns->ns.inum */
++            /* current->nsproxy->proc_inum */
+             unsigned int mnt_ns;
+             char comm[TASK_COMM_LEN];
+             unsigned long flags;
+@@ -106,7 +105,7 @@ int syscall__mount(struct pt_regs *ctx, char __user *source,
+     task = (struct task_struct *)bpf_get_current_task();
+     nsproxy = task->nsproxy;
+     mnt_ns = nsproxy->mnt_ns;
+-    event.enter.mnt_ns = mnt_ns->ns.inum;
++    event.enter.mnt_ns = mnt_ns->proc_inum;
+     events.perf_submit(ctx, &event, sizeof(event));
+ 
+     event.type = EVENT_MOUNT_SOURCE;
+@@ -161,7 +160,7 @@ int syscall__umount(struct pt_regs *ctx, char __user *target, int flags)
+     task = (struct task_struct *)bpf_get_current_task();
+     nsproxy = task->nsproxy;
+     mnt_ns = nsproxy->mnt_ns;
+-    event.enter.mnt_ns = mnt_ns->ns.inum;
++    event.enter.mnt_ns = mnt_ns->proc_inum;
+     events.perf_submit(ctx, &event, sizeof(event));
+ 
+     event.type = EVENT_UMOUNT_TARGET;
+diff --git a/tools/nfsslower.py b/tools/nfsslower.py
+index 0f836af..a7018cb 100755
+--- a/tools/nfsslower.py
++++ b/tools/nfsslower.py
+@@ -65,6 +65,7 @@ bpf_text = """
+ 
+ #include <uapi/linux/ptrace.h>
+ #include <linux/fs.h>
++#include <linux/aio.h>
+ #include <linux/sched.h>
+ #include <linux/dcache.h>
+ 
+diff --git a/tools/offcputime.py b/tools/offcputime.py
+index e1f3af9..802fbfd 100755
+--- a/tools/offcputime.py
++++ b/tools/offcputime.py
+@@ -128,7 +128,9 @@ BPF_HASH(counts, struct key_t);
+ BPF_HASH(start, u32);
+ BPF_STACK_TRACE(stack_traces, STACK_STORAGE_SIZE);
+ 
+-int oncpu(struct pt_regs *ctx, struct task_struct *prev) {
++struct rq;
++
++int oncpu(struct pt_regs *ctx, struct rq *rq, struct task_struct *prev) {
+     u32 pid = prev->pid;
+     u32 tgid = prev->tgid;
+     u64 ts, *tsp;
+diff --git a/tools/offwaketime.py b/tools/offwaketime.py
+index 2b78c89..83838c9 100755
+--- a/tools/offwaketime.py
++++ b/tools/offwaketime.py
+@@ -163,7 +163,9 @@ int waker(struct pt_regs *ctx, struct task_struct *p) {
+     return 0;
+ }
+ 
+-int oncpu(struct pt_regs *ctx, struct task_struct *p) {
++struct rq;
++
++int oncpu(struct pt_regs *ctx, struct rq *rq, struct task_struct *p) {
+     // PID and TGID of the previous Process (Process going into waiting)
+     u32 pid = p->pid;
+     u32 tgid = p->tgid;
+diff --git a/tools/runqlat.py b/tools/runqlat.py
+index 9fd4064..0c9bb1c 100755
+--- a/tools/runqlat.py
++++ b/tools/runqlat.py
+@@ -111,7 +111,7 @@ int trace_ttwu_do_wakeup(struct pt_regs *ctx, struct rq *rq, struct task_struct
+ }
+ 
+ // calculate latency
+-int trace_run(struct pt_regs *ctx, struct task_struct *prev)
++int trace_run(struct pt_regs *ctx, struct rq *rq, struct task_struct *prev)
+ {
+     u32 pid, tgid;
+ 
+diff --git a/tools/runqslower.py b/tools/runqslower.py
+index 7a1869c..b3e3fac 100755
+--- a/tools/runqslower.py
++++ b/tools/runqslower.py
+@@ -98,7 +98,7 @@ int trace_ttwu_do_wakeup(struct pt_regs *ctx, struct rq *rq, struct task_struct
+ }
+ 
+ // calculate latency
+-int trace_run(struct pt_regs *ctx, struct task_struct *prev)
++int trace_run(struct pt_regs *ctx, struct rq *rq, struct task_struct *prev)
+ {
+     u32 pid, tgid;
+ 
+diff --git a/tools/solisten.py b/tools/solisten.py
+index 6a35f82..a9e8722 100755
+--- a/tools/solisten.py
++++ b/tools/solisten.py
+@@ -100,7 +100,7 @@ int kprobe__inet_listen(struct pt_regs *ctx, struct socket *sock, int backlog)
+ 
+         // Get network namespace id, if kernel supports it
+ #ifdef CONFIG_NET_NS
+-        evt.netns = sk->__sk_common.skc_net.net->ns.inum;
++        evt.netns = sk->__sk_common.skc_net->proc_inum;
+ #else
+         evt.netns = 0;
+ #endif
+diff --git a/tools/tcpsubnet.py b/tools/tcpsubnet.py
+index 2779276..f47eea7 100755
+--- a/tools/tcpsubnet.py
++++ b/tools/tcpsubnet.py
+@@ -110,8 +110,8 @@ struct index_key_t {
+ 
+ BPF_HASH(ipv4_send_bytes, struct index_key_t);
+ 
+-int kprobe__tcp_sendmsg(struct pt_regs *ctx, struct sock *sk,
+-    struct msghdr *msg, size_t size)
++int kprobe__tcp_sendmsg(struct pt_regs *ctx, struct kiocb *iocb,
++    struct sock *sk, struct msghdr *msg, size_t size)
+ {
+     u16 family = sk->__sk_common.skc_family;
+     u64 *val, zero = 0;
+diff --git a/tools/tcptracer.py b/tools/tcptracer.py
+index 5e97ee6..177e860 100755
+--- a/tools/tcptracer.py
++++ b/tools/tcptracer.py
+@@ -116,7 +116,7 @@ static int read_ipv4_tuple(struct ipv4_tuple_t *tuple, struct sock *skp)
+   u16 sport = sockp->inet_sport;
+   u16 dport = skp->__sk_common.skc_dport;
+ #ifdef CONFIG_NET_NS
+-  net_ns_inum = skp->__sk_common.skc_net.net->ns.inum;
++  net_ns_inum = skp->__sk_common.skc_net->proc_inum;
+ #endif
+ 
+   ##FILTER_NETNS##
+@@ -143,7 +143,7 @@ static int read_ipv6_tuple(struct ipv6_tuple_t *tuple, struct sock *skp)
+   u16 sport = sockp->inet_sport;
+   u16 dport = skp->__sk_common.skc_dport;
+ #ifdef CONFIG_NET_NS
+-  net_ns_inum = skp->__sk_common.skc_net.net->ns.inum;
++  net_ns_inum = skp->__sk_common.skc_net->proc_inum;
+ #endif
+   bpf_probe_read(&saddr, sizeof(saddr),
+                  skp->__sk_common.skc_v6_rcv_saddr.in6_u.u6_addr32);
+@@ -361,8 +361,7 @@ int trace_close_entry(struct pt_regs *ctx, struct sock *skp)
+   // Don't generate close events for connections that were never
+   // established in the first place.
+   if (oldstate == TCP_SYN_SENT ||
+-      oldstate == TCP_SYN_RECV ||
+-      oldstate == TCP_NEW_SYN_RECV)
++      oldstate == TCP_SYN_RECV )
+       return 0;
+ 
+   u8 ipver = 0;
+@@ -433,7 +432,7 @@ int trace_accept_return(struct pt_regs *ctx)
+ 
+   // Get network namespace id, if kernel supports it
+ #ifdef CONFIG_NET_NS
+-  net_ns_inum = newsk->__sk_common.skc_net.net->ns.inum;
++  net_ns_inum = newsk->__sk_common.skc_net->proc_inum;
+ #endif
+ 
+   ##FILTER_NETNS##
+diff --git a/tools/xfsdist.py b/tools/xfsdist.py
+index f409f90..2976f9e 100755
+--- a/tools/xfsdist.py
++++ b/tools/xfsdist.py
+@@ -137,12 +137,12 @@ bpf_text = bpf_text.replace('FACTOR', str(factor))
+ b = BPF(text=bpf_text)
+ 
+ # common file functions
+-b.attach_kprobe(event="xfs_file_read_iter", fn_name="trace_entry")
+-b.attach_kprobe(event="xfs_file_write_iter", fn_name="trace_entry")
++b.attach_kprobe(event="xfs_file_aio_read", fn_name="trace_entry")
++b.attach_kprobe(event="xfs_file_aio_write", fn_name="trace_entry")
+ b.attach_kprobe(event="xfs_file_open", fn_name="trace_entry")
+ b.attach_kprobe(event="xfs_file_fsync", fn_name="trace_entry")
+-b.attach_kretprobe(event="xfs_file_read_iter", fn_name="trace_read_return")
+-b.attach_kretprobe(event="xfs_file_write_iter", fn_name="trace_write_return")
++b.attach_kretprobe(event="xfs_file_aio_read", fn_name="trace_read_return")
++b.attach_kretprobe(event="xfs_file_aio_write", fn_name="trace_write_return")
+ b.attach_kretprobe(event="xfs_file_open", fn_name="trace_open_return")
+ b.attach_kretprobe(event="xfs_file_fsync", fn_name="trace_fsync_return")
+ 
+diff --git a/tools/xfsslower.py b/tools/xfsslower.py
+index da70c57..4320284 100755
+--- a/tools/xfsslower.py
++++ b/tools/xfsslower.py
+@@ -60,6 +60,7 @@ debug = 0
+ bpf_text = """
+ #include <uapi/linux/ptrace.h>
+ #include <linux/fs.h>
++#include <linux/aio.h>
+ #include <linux/sched.h>
+ #include <linux/dcache.h>
+ 
+@@ -94,7 +95,7 @@ BPF_PERF_OUTPUT(events);
+ // Store timestamp and size on entry
+ //
+ 
+-// xfs_file_read_iter(), xfs_file_write_iter():
++// xfs_file_aio_read(), xfs_file_aio_write():
+ int trace_rw_entry(struct pt_regs *ctx, struct kiocb *iocb)
+ {
+     u64 id = bpf_get_current_pid_tgid();
+@@ -273,12 +274,12 @@ TASK_COMM_LEN = 16      # linux/sched.h
+ b = BPF(text=bpf_text)
+ 
+ # common file functions
+-b.attach_kprobe(event="xfs_file_read_iter", fn_name="trace_rw_entry")
+-b.attach_kprobe(event="xfs_file_write_iter", fn_name="trace_rw_entry")
++b.attach_kprobe(event="xfs_file_aio_read", fn_name="trace_rw_entry")
++b.attach_kprobe(event="xfs_file_aio_write", fn_name="trace_rw_entry")
+ b.attach_kprobe(event="xfs_file_open", fn_name="trace_open_entry")
+ b.attach_kprobe(event="xfs_file_fsync", fn_name="trace_fsync_entry")
+-b.attach_kretprobe(event="xfs_file_read_iter", fn_name="trace_read_return")
+-b.attach_kretprobe(event="xfs_file_write_iter", fn_name="trace_write_return")
++b.attach_kretprobe(event="xfs_file_aio_read", fn_name="trace_read_return")
++b.attach_kretprobe(event="xfs_file_aio_write", fn_name="trace_write_return")
+ b.attach_kretprobe(event="xfs_file_open", fn_name="trace_open_return")
+ b.attach_kretprobe(event="xfs_file_fsync", fn_name="trace_fsync_return")
+ 
+-- 
+2.17.1
+

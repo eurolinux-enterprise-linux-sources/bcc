@@ -1,0 +1,30 @@
+From ddbdaef40b7db8259f7728a64839b9ff38fbfd76 Mon Sep 17 00:00:00 2001
+From: Jerome Marchand <jmarchan@redhat.com>
+Date: Fri, 15 Jun 2018 11:41:47 +0200
+Subject: [PATCH] Link against libLLVM.so instead of static libs
+
+---
+ src/cc/CMakeLists.txt | 4 ++--
+ 1 file changed, 2 insertions(+), 2 deletions(-)
+
+diff --git a/src/cc/CMakeLists.txt b/src/cc/CMakeLists.txt
+index 8ddfd8f..0c3d7df 100644
+--- a/src/cc/CMakeLists.txt
++++ b/src/cc/CMakeLists.txt
+@@ -62,11 +62,11 @@ set(CMAKE_SHARED_LINKER_FLAGS "${CMAKE_SHARED_LINKER_FLAGS} ${llvm_lib_exclude_f
+ # bcc_common_libs_for_a for archive libraries
+ # bcc_common_libs_for_s for shared libraries
+ set(bcc_common_libs_for_a b_frontend clang_frontend bpf-static
+-  -Wl,--whole-archive ${clang_libs} ${llvm_libs} -Wl,--no-whole-archive
++  -Wl,--whole-archive ${clang_libs} libLLVM-6.0-rhel.so -Wl,--no-whole-archive
+   ${LIBELF_LIBRARIES})
+ set(bcc_common_libs_for_s ${bcc_common_libs_for_a})
+ set(bcc_common_libs_for_lua b_frontend clang_frontend bpf-static
+-  ${clang_libs} ${llvm_libs} ${LIBELF_LIBRARIES})
++  ${clang_libs} libLLVM-6.0-rhel.so ${LIBELF_LIBRARIES})
+ 
+ if(ENABLE_CPP_API)
+   add_subdirectory(api)
+-- 
+2.17.1
+
