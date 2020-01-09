@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 # @lint-avoid-python-3-compatibility-imports
 #
 # funcslower  Trace slow kernel or user function calls.
@@ -94,15 +94,15 @@ struct data_t {
     u64 duration_ns;
     u64 retval;
     char comm[TASK_COMM_LEN];
+#ifdef GRAB_ARGS
+    u64 args[6];
+#endif
 #ifdef USER_STACKS
     int user_stack_id;
 #endif
 #ifdef KERNEL_STACKS
     int kernel_stack_id;
     u64 kernel_ip;
-#endif
-#ifdef GRAB_ARGS
-    u64 args[6];
 #endif
 };
 
@@ -306,7 +306,7 @@ def print_stack(event):
         # print folded stack output
         user_stack = list(user_stack)
         kernel_stack = list(kernel_stack)
-        line = [event.comm.decode()] + \
+        line = [event.comm.decode('utf-8', 'replace')] + \
             [b.sym(addr, event.tgid_pid) for addr in reversed(user_stack)] + \
             (do_delimiter and ["-"] or []) + \
             [b.ksym(addr) for addr in reversed(kernel_stack)]
@@ -323,11 +323,14 @@ def print_event(cpu, data, size):
     ts = float(event.duration_ns) / time_multiplier
     if not args.folded:
         print((time_str(event) + "%-14.14s %-6s %7.2f %16x %s %s") %
-            (event.comm.decode(), event.tgid_pid >> 32,
+            (event.comm.decode('utf-8', 'replace'), event.tgid_pid >> 32,
              ts, event.retval, args.functions[event.id], args_str(event)))
     if args.user_stack or args.kernel_stack:
         print_stack(event)
 
 b["events"].open_perf_buffer(print_event, page_cnt=64)
 while True:
-    b.perf_buffer_poll()
+    try:
+        b.perf_buffer_poll()
+    except KeyboardInterrupt:
+        exit()

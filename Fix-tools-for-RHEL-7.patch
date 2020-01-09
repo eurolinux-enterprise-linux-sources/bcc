@@ -1,4 +1,4 @@
-From c28fdc2ad6c6acbd6c61dc78a6c6e114572357a5 Mon Sep 17 00:00:00 2001
+From ac5050ea551af40b47bf2010e179e9020acada69 Mon Sep 17 00:00:00 2001
 From: Jerome Marchand <jmarchan@redhat.com>
 Date: Thu, 16 Aug 2018 14:58:56 +0200
 Subject: [PATCH] Fix tools for RHEL 7
@@ -27,6 +27,7 @@ fixes the following:
  tools/nfsslower.py         |  1 +
  tools/offcputime.py        |  4 +++-
  tools/offwaketime.py       |  4 +++-
+ tools/oomkill.py           |  8 ++++----
  tools/runqlat.py           |  2 +-
  tools/runqslower.py        |  2 +-
  tools/solisten.py          |  2 +-
@@ -34,13 +35,13 @@ fixes the following:
  tools/tcptracer.py         |  9 ++++-----
  tools/xfsdist.py           |  8 ++++----
  tools/xfsslower.py         | 11 ++++++-----
- 19 files changed, 84 insertions(+), 58 deletions(-)
+ 20 files changed, 88 insertions(+), 62 deletions(-)
 
 diff --git a/src/python/bcc/__init__.py b/src/python/bcc/__init__.py
-index 8f793aa..470ac49 100644
+index 1d99afd..f38d23f 100644
 --- a/src/python/bcc/__init__.py
 +++ b/src/python/bcc/__init__.py
-@@ -500,8 +500,11 @@ DEBUG_BPF_REGISTER_STATE = 0x10
+@@ -511,8 +511,11 @@ DEBUG_BPF_REGISTER_STATE = 0x10
  
      @staticmethod
      def get_kprobe_functions(event_re):
@@ -55,7 +56,7 @@ index 8f793aa..470ac49 100644
  
          in_init_section = 0
 diff --git a/tools/btrfsdist.py b/tools/btrfsdist.py
-index 4659ab4..3326b67 100755
+index a0aeb24..3f179d0 100755
 --- a/tools/btrfsdist.py
 +++ b/tools/btrfsdist.py
 @@ -60,6 +60,7 @@ debug = 0
@@ -95,7 +96,7 @@ index 4659ab4..3326b67 100755
  b.attach_kretprobe(event="btrfs_sync_file", fn_name="trace_fsync_return")
  
 diff --git a/tools/btrfsslower.py b/tools/btrfsslower.py
-index 644cb22..a720396 100755
+index cff61b8..26aff65 100755
 --- a/tools/btrfsslower.py
 +++ b/tools/btrfsslower.py
 @@ -63,6 +63,7 @@ debug = 0
@@ -124,7 +125,7 @@ index 644cb22..a720396 100755
  int trace_write_entry(struct pt_regs *ctx, struct kiocb *iocb)
  {
      u64 id = bpf_get_current_pid_tgid();
-@@ -327,12 +328,12 @@ TASK_COMM_LEN = 16      # linux/sched.h
+@@ -329,12 +330,12 @@ TASK_COMM_LEN = 16      # linux/sched.h
  b = BPF(text=bpf_text)
  
  # Common file functions. See earlier comment about generic_*().
@@ -142,7 +143,7 @@ index 644cb22..a720396 100755
  b.attach_kretprobe(event="btrfs_sync_file", fn_name="trace_fsync_return")
  
 diff --git a/tools/cpudist.py b/tools/cpudist.py
-index 4d7c9eb..ddb675e 100755
+index 9e61341..e5fd550 100755
 --- a/tools/cpudist.py
 +++ b/tools/cpudist.py
 @@ -94,7 +94,9 @@ static inline void update_hist(u32 tgid, u32 pid, u64 ts)
@@ -157,7 +158,7 @@ index 4d7c9eb..ddb675e 100755
      u64 ts = bpf_ktime_get_ns();
      u64 pid_tgid = bpf_get_current_pid_tgid();
 diff --git a/tools/ext4dist.py b/tools/ext4dist.py
-index 227c138..f57cda8 100755
+index b71cfda..a6a7e55 100755
 --- a/tools/ext4dist.py
 +++ b/tools/ext4dist.py
 @@ -60,6 +60,7 @@ debug = 0
@@ -177,8 +178,8 @@ index 227c138..f57cda8 100755
  // own function, for reads. So we need to trace that and then filter on ext4,
  // which I do by checking file->f_op.
  int trace_read_entry(struct pt_regs *ctx, struct kiocb *iocb)
-@@ -183,12 +184,12 @@ b = BPF(text=bpf_text)
- if BPF.get_kprobe_functions('ext4_file_read_iter'):
+@@ -189,12 +190,12 @@ b = BPF(text=bpf_text)
+ if BPF.get_kprobe_functions(b'ext4_file_read_iter'):
  	b.attach_kprobe(event="ext4_file_read_iter", fn_name="trace_entry")
  else:
 -	b.attach_kprobe(event="generic_file_read_iter", fn_name="trace_read_entry")
@@ -195,7 +196,7 @@ index 227c138..f57cda8 100755
  b.attach_kretprobe(event="ext4_sync_file", fn_name="trace_fsync_return")
  
 diff --git a/tools/ext4slower.py b/tools/ext4slower.py
-index eb6430e..276123f 100755
+index 344e68f..fe90046 100755
 --- a/tools/ext4slower.py
 +++ b/tools/ext4slower.py
 @@ -64,6 +64,7 @@ debug = 0
@@ -224,7 +225,7 @@ index eb6430e..276123f 100755
  int trace_write_entry(struct pt_regs *ctx, struct kiocb *iocb)
  {
      u64 id = bpf_get_current_pid_tgid();
-@@ -328,15 +329,15 @@ b = BPF(text=bpf_text)
+@@ -330,15 +331,15 @@ b = BPF(text=bpf_text)
  if BPF.get_kprobe_functions(b'ext4_file_read_iter'):
      b.attach_kprobe(event="ext4_file_read_iter", fn_name="trace_read_entry")
  else:
@@ -245,7 +246,7 @@ index eb6430e..276123f 100755
  b.attach_kretprobe(event="ext4_sync_file", fn_name="trace_fsync_return")
  
 diff --git a/tools/fileslower.py b/tools/fileslower.py
-index 5caa4ca..6af91af 100755
+index 219a94a..46ead05 100755
 --- a/tools/fileslower.py
 +++ b/tools/fileslower.py
 @@ -124,7 +124,7 @@ int trace_read_entry(struct pt_regs *ctx, struct file *file,
@@ -283,10 +284,10 @@ index 5caa4ca..6af91af 100755
      b.attach_kprobe(event="__vfs_write", fn_name="trace_write_entry")
      b.attach_kretprobe(event="__vfs_write", fn_name="trace_write_return")
 diff --git a/tools/memleak.py b/tools/memleak.py
-index 5d69538..3cf9ee0 100755
+index 4021bf8..7e70af4 100755
 --- a/tools/memleak.py
 +++ b/tools/memleak.py
-@@ -354,13 +354,21 @@ TRACEPOINT_PROBE(kmem, kmem_cache_free) {
+@@ -355,13 +355,21 @@ TRACEPOINT_PROBE(kmem, kmem_cache_free) {
          return gen_free_enter((struct pt_regs *)args, (void *)args->ptr);
  }
  
@@ -311,7 +312,7 @@ index 5d69538..3cf9ee0 100755
  """
  
 diff --git a/tools/mountsnoop.py b/tools/mountsnoop.py
-index 2d0fa1a..bec8993 100755
+index b6f96ca..e2956f8 100755
 --- a/tools/mountsnoop.py
 +++ b/tools/mountsnoop.py
 @@ -24,7 +24,6 @@ bpf_text = r"""
@@ -359,7 +360,7 @@ index 2d0fa1a..bec8993 100755
  
      event.type = EVENT_UMOUNT_TARGET;
 diff --git a/tools/nfsslower.py b/tools/nfsslower.py
-index 0f836af..a7018cb 100755
+index 8113eff..e6c62ba 100755
 --- a/tools/nfsslower.py
 +++ b/tools/nfsslower.py
 @@ -65,6 +65,7 @@ bpf_text = """
@@ -371,7 +372,7 @@ index 0f836af..a7018cb 100755
  #include <linux/dcache.h>
  
 diff --git a/tools/offcputime.py b/tools/offcputime.py
-index e1f3af9..802fbfd 100755
+index 6440260..ef328c1 100755
 --- a/tools/offcputime.py
 +++ b/tools/offcputime.py
 @@ -128,7 +128,9 @@ BPF_HASH(counts, struct key_t);
@@ -386,7 +387,7 @@ index e1f3af9..802fbfd 100755
      u32 tgid = prev->tgid;
      u64 ts, *tsp;
 diff --git a/tools/offwaketime.py b/tools/offwaketime.py
-index 2b78c89..83838c9 100755
+index 3c4f0f3..89e7b60 100755
 --- a/tools/offwaketime.py
 +++ b/tools/offwaketime.py
 @@ -163,7 +163,9 @@ int waker(struct pt_regs *ctx, struct task_struct *p) {
@@ -400,8 +401,32 @@ index 2b78c89..83838c9 100755
      // PID and TGID of the previous Process (Process going into waiting)
      u32 pid = p->pid;
      u32 tgid = p->tgid;
+diff --git a/tools/oomkill.py b/tools/oomkill.py
+index db3a537..5357d9f 100755
+--- a/tools/oomkill.py
++++ b/tools/oomkill.py
+@@ -36,15 +36,15 @@ struct data_t {
+ 
+ BPF_PERF_OUTPUT(events);
+ 
+-void kprobe__oom_kill_process(struct pt_regs *ctx, struct oom_control *oc, const char *message)
++void kprobe__oom_kill_process(struct pt_regs *ctx, struct task_struct *p,
++			gfp_t gfp_mask, int order, unsigned int points,
++			unsigned long totalpages, struct mem_cgroup *memcg)
+ {
+-    unsigned long totalpages;
+-    struct task_struct *p = oc->chosen;
+     struct data_t data = {};
+     u32 pid = bpf_get_current_pid_tgid();
+     data.fpid = pid;
+     data.tpid = p->pid;
+-    data.pages = oc->totalpages;
++    data.pages = totalpages;
+     bpf_get_current_comm(&data.fcomm, sizeof(data.fcomm));
+     bpf_probe_read(&data.tcomm, sizeof(data.tcomm), p->comm);
+     events.perf_submit(ctx, &data, sizeof(data));
 diff --git a/tools/runqlat.py b/tools/runqlat.py
-index 9fd4064..0c9bb1c 100755
+index 9c56d22..3a56d56 100755
 --- a/tools/runqlat.py
 +++ b/tools/runqlat.py
 @@ -111,7 +111,7 @@ int trace_ttwu_do_wakeup(struct pt_regs *ctx, struct rq *rq, struct task_struct
@@ -414,7 +439,7 @@ index 9fd4064..0c9bb1c 100755
      u32 pid, tgid;
  
 diff --git a/tools/runqslower.py b/tools/runqslower.py
-index 7a1869c..b3e3fac 100755
+index 0b3e1c1..8be9ef0 100755
 --- a/tools/runqslower.py
 +++ b/tools/runqslower.py
 @@ -98,7 +98,7 @@ int trace_ttwu_do_wakeup(struct pt_regs *ctx, struct rq *rq, struct task_struct
@@ -427,10 +452,10 @@ index 7a1869c..b3e3fac 100755
      u32 pid, tgid;
  
 diff --git a/tools/solisten.py b/tools/solisten.py
-index 6a35f82..a9e8722 100755
+index 81e82e0..f30a23f 100755
 --- a/tools/solisten.py
 +++ b/tools/solisten.py
-@@ -100,7 +100,7 @@ int kprobe__inet_listen(struct pt_regs *ctx, struct socket *sock, int backlog)
+@@ -101,7 +101,7 @@ int kprobe__inet_listen(struct pt_regs *ctx, struct socket *sock, int backlog)
  
          // Get network namespace id, if kernel supports it
  #ifdef CONFIG_NET_NS
@@ -440,7 +465,7 @@ index 6a35f82..a9e8722 100755
          evt.netns = 0;
  #endif
 diff --git a/tools/tcpsubnet.py b/tools/tcpsubnet.py
-index 2779276..f47eea7 100755
+index bf944e1..a054a7d 100755
 --- a/tools/tcpsubnet.py
 +++ b/tools/tcpsubnet.py
 @@ -110,8 +110,8 @@ struct index_key_t {
@@ -453,9 +478,9 @@ index 2779276..f47eea7 100755
 +    struct sock *sk, struct msghdr *msg, size_t size)
  {
      u16 family = sk->__sk_common.skc_family;
-     u64 *val, zero = 0;
+ 
 diff --git a/tools/tcptracer.py b/tools/tcptracer.py
-index 5e97ee6..177e860 100755
+index 8f272eb..021803a 100755
 --- a/tools/tcptracer.py
 +++ b/tools/tcptracer.py
 @@ -116,7 +116,7 @@ static int read_ipv4_tuple(struct ipv4_tuple_t *tuple, struct sock *skp)
@@ -496,7 +521,7 @@ index 5e97ee6..177e860 100755
  
    ##FILTER_NETNS##
 diff --git a/tools/xfsdist.py b/tools/xfsdist.py
-index f409f90..2976f9e 100755
+index 1a7fdd9..8f2ab46 100755
 --- a/tools/xfsdist.py
 +++ b/tools/xfsdist.py
 @@ -137,12 +137,12 @@ bpf_text = bpf_text.replace('FACTOR', str(factor))
@@ -517,7 +542,7 @@ index f409f90..2976f9e 100755
  b.attach_kretprobe(event="xfs_file_fsync", fn_name="trace_fsync_return")
  
 diff --git a/tools/xfsslower.py b/tools/xfsslower.py
-index da70c57..4320284 100755
+index 5b4e0a2..0dd75b6 100755
 --- a/tools/xfsslower.py
 +++ b/tools/xfsslower.py
 @@ -60,6 +60,7 @@ debug = 0
@@ -537,7 +562,7 @@ index da70c57..4320284 100755
  int trace_rw_entry(struct pt_regs *ctx, struct kiocb *iocb)
  {
      u64 id = bpf_get_current_pid_tgid();
-@@ -273,12 +274,12 @@ TASK_COMM_LEN = 16      # linux/sched.h
+@@ -280,12 +281,12 @@ TASK_COMM_LEN = 16      # linux/sched.h
  b = BPF(text=bpf_text)
  
  # common file functions
@@ -555,5 +580,5 @@ index da70c57..4320284 100755
  b.attach_kretprobe(event="xfs_file_fsync", fn_name="trace_fsync_return")
  
 -- 
-2.17.1
+2.20.1
 

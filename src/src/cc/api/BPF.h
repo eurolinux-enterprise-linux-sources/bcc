@@ -47,8 +47,9 @@ class BPF {
   static const int BPF_MAX_STACK_DEPTH = 127;
 
   explicit BPF(unsigned int flag = 0, TableStorage* ts = nullptr,
-               bool rw_engine_enabled = true)
-      : flag_(flag), bpf_module_(new BPFModule(flag, ts, rw_engine_enabled)) {}
+               bool rw_engine_enabled = bpf_module_rw_engine_enabled(), const std::string &maps_ns = "")
+      : flag_(flag),
+      bpf_module_(new BPFModule(flag, ts, rw_engine_enabled, maps_ns)) {}
   StatusTuple init(const std::string& bpf_program,
                    const std::vector<std::string>& cflags = {},
                    const std::vector<USDT>& usdt = {});
@@ -140,6 +141,8 @@ class BPF {
 
   BPFCgroupArray get_cgroup_array(const std::string& name);
 
+  BPFDevmapTable get_devmap_table(const std::string& name);
+
   BPFStackTable get_stack_table(const std::string& name,
                                 bool use_debug_file = true,
                                 bool check_debug_file_crc = true);
@@ -172,6 +175,8 @@ class BPF {
   StatusTuple load_func(const std::string& func_name, enum bpf_prog_type type,
                         int& fd);
   StatusTuple unload_func(const std::string& func_name);
+
+  int free_bcc_memory();
 
  private:
   std::string get_kprobe_event(const std::string& kernel_func,
@@ -245,6 +250,7 @@ class USDT {
   USDT(const std::string& binary_path, pid_t pid, const std::string& provider,
        const std::string& name, const std::string& probe_func);
   USDT(const USDT& usdt);
+  USDT(USDT&& usdt) noexcept;
 
   StatusTuple init();
 
@@ -252,7 +258,7 @@ class USDT {
 
   std::string print_name() const {
     return provider_ + ":" + name_ + " from binary " + binary_path_ + " PID " +
-           std::to_string(pid_) + " for probe " + "probe_func_";
+           std::to_string(pid_) + " for probe " + probe_func_;
   }
 
   friend std::ostream& operator<<(std::ostream& out, const USDT& usdt) {

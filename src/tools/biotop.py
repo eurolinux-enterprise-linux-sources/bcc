@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 # @lint-avoid-python-3-compatibility-imports
 #
 # biotop  block device (disk) I/O by process.
@@ -53,7 +53,7 @@ loadavg = "/proc/loadavg"
 diskstats = "/proc/diskstats"
 
 # signal handler
-def signal_ignore(signal, frame):
+def signal_ignore(signal_value, frame):
     print()
 
 # load BPF program
@@ -173,7 +173,8 @@ if args.ebpf:
 
 b = BPF(text=bpf_text)
 b.attach_kprobe(event="blk_account_io_start", fn_name="trace_pid_start")
-b.attach_kprobe(event="blk_start_request", fn_name="trace_req_start")
+if BPF.get_kprobe_functions(b'blk_start_request'):
+    b.attach_kprobe(event="blk_start_request", fn_name="trace_req_start")
 b.attach_kprobe(event="blk_mq_start_request", fn_name="trace_req_start")
 b.attach_kprobe(event="blk_account_io_completion",
     fn_name="trace_req_completion")
@@ -221,8 +222,8 @@ while 1:
         # print line
         avg_ms = (float(v.us) / 1000) / v.io
         print("%-6d %-16s %1s %-3d %-3d %-8s %5s %7s %6.2f" % (k.pid,
-            k.name.decode(), "W" if k.rwflag else "R", k.major, k.minor,
-            diskname, v.io, v.bytes / 1024, avg_ms))
+            k.name.decode('utf-8', 'replace'), "W" if k.rwflag else "R",
+            k.major, k.minor, diskname, v.io, v.bytes / 1024, avg_ms))
 
         line += 1
         if line >= maxrows:

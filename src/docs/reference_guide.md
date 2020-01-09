@@ -90,6 +90,10 @@ This guide is incomplete. If something feels missing, check the bcc and kernel s
     - [1. Invalid mem access](#1-invalid-mem-access)
     - [2. Cannot call GPL only function from proprietary program](#2-cannot-call-gpl-only-function-from-proprietary-program)
 
+- [Environment Variables](#envvars)
+    - [1. kernel source directory](#1-kernel-source-directory)
+    - [2. kernel version overriding](#2-kernel-version-overriding)
+
 # BPF C
 
 This section describes the C part of a bcc program.
@@ -409,7 +413,7 @@ Return: 0 on success
 
 When used in a program attached to a function entry kprobe, causes the
 execution of the function to be skipped, immediately returning `rc` instead.
-This is used for targeted error injection. 
+This is used for targeted error injection.
 
 bpf_override_return will only work when the kprobed function is whitelisted to
 allow error injections. Whitelisting entails tagging a function with
@@ -429,11 +433,11 @@ int kprobe__io_ctl_init(void *ctx) {
 
 ### 1. bpf_trace_printk()
 
-Syntax: ```int bpf_trace_printk(const char *fmt, int fmt_size, ...)```
+Syntax: ```int bpf_trace_printk(const char *fmt, ...)```
 
 Return: 0 on success
 
-A simple kernel facility for printf() to the common trace_pipe (/sys/kernel/debug/tracing/trace_pipe). This is ok for some quick examples, but has limitations: 3 args max, 1 %s only, and trace_pipe is globally shared, so concurrent programs will have clashing output. A better interface is via BPF_PERF_OUTPUT().
+A simple kernel facility for printf() to the common trace_pipe (/sys/kernel/debug/tracing/trace_pipe). This is ok for some quick examples, but has limitations: 3 args max, 1 %s only, and trace_pipe is globally shared, so concurrent programs will have clashing output. A better interface is via BPF_PERF_OUTPUT(). Note that calling this helper is made simpler than the original kernel version, which has ```fmt_size``` as the second parameter.
 
 Examples in situ:
 [search /examples](https://github.com/iovisor/bcc/search?q=bpf_trace_printk+path%3Aexamples&type=Code),
@@ -752,9 +756,9 @@ Examples in situ:
 
 ### 17. map.increment()
 
-Syntax: ```map.increment(key)```
+Syntax: ```map.increment(key[, increment_amount])```
 
-Increments the key's value by one. Used for histograms.
+Increments the key's value by `increment_amount`, which defaults to 1. Used for histograms.
 
 Examples in situ:
 [search /examples](https://github.com/iovisor/bcc/search?q=increment+path%3Aexamples&type=Code),
@@ -1558,3 +1562,26 @@ bpf: Failed to load program: Invalid argument
 8: (85) call bpf_get_stackid#27
 cannot call GPL only function from proprietary program
 ```
+
+# Environment Variables
+
+## 1. Kernel source directory
+
+eBPF program compilation needs kernel sources or kernel headers with headers
+compiled. In case your kernel sources are at a non-standard location where BCC
+cannot find then, its possible to provide BCC the absolute path of the location
+by setting `BCC_KERNEL_SOURCE` to it.
+
+## 2. Kernel version overriding
+
+By default, BCC stores the `LINUX_VERSION_CODE` in the generated eBPF object
+which is then passed along to the kernel when the eBPF program is loaded.
+Sometimes this is quite inconvenient especially when the kernel is slightly
+updated such as an LTS kernel release. Its extremely unlikely the slight
+mismatch would cause any issues with the loaded eBPF program. By setting
+`BCC_LINUX_VERSION_CODE` to the version of the kernel that's running, the check
+for verifying the kernel version can be bypassed. This is needed for programs
+that use kprobes. This needs to be encoded in the format: `(VERSION * 65536) +
+(PATCHLEVEL * 256) + SUBLEVEL`. For example, if the running kernel is `4.9.10`,
+then can set `export BCC_LINUX_VERSION_CODE=264458` to override the kernel
+version check successfully.

@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 # @lint-avoid-python-3-compatibility-imports
 #
 # tcplife   Trace the lifespan of TCP sessions and summarize.
@@ -76,11 +76,10 @@ BPF_HASH(birth, struct sock *, u64);
 
 // separate data structs for ipv4 and ipv6
 struct ipv4_data_t {
-    // XXX: switch some to u32's when supported
     u64 ts_us;
-    u64 pid;
-    u64 saddr;
-    u64 daddr;
+    u32 pid;
+    u32 saddr;
+    u32 daddr;
     u64 ports;
     u64 rx_b;
     u64 tx_b;
@@ -91,7 +90,7 @@ BPF_PERF_OUTPUT(ipv4_events);
 
 struct ipv6_data_t {
     u64 ts_us;
-    u64 pid;
+    u32 pid;
     unsigned __int128 saddr;
     unsigned __int128 daddr;
     u64 ports;
@@ -195,8 +194,10 @@ int kprobe__tcp_set_state(struct pt_regs *ctx, struct sock *sk, int state)
     u16 family = sk->__sk_common.skc_family;
 
     if (family == AF_INET) {
-        struct ipv4_data_t data4 = {.span_us = delta_us,
-            .rx_b = rx_b, .tx_b = tx_b};
+        struct ipv4_data_t data4 = {};
+        data4.span_us = delta_us;
+        data4.rx_b = rx_b;
+        data4.tx_b = tx_b;
         data4.ts_us = bpf_ktime_get_ns() / 1000;
         data4.saddr = sk->__sk_common.skc_rcv_saddr;
         data4.daddr = sk->__sk_common.skc_daddr;
@@ -211,8 +212,10 @@ int kprobe__tcp_set_state(struct pt_regs *ctx, struct sock *sk, int state)
         ipv4_events.perf_submit(ctx, &data4, sizeof(data4));
 
     } else /* 6 */ {
-        struct ipv6_data_t data6 = {.span_us = delta_us,
-            .rx_b = rx_b, .tx_b = tx_b};
+        struct ipv6_data_t data6 = {};
+        data6.span_us = delta_us;
+        data6.rx_b = rx_b;
+        data6.tx_b = tx_b;
         data6.ts_us = bpf_ktime_get_ns() / 1000;
         bpf_probe_read(&data6.saddr, sizeof(data6.saddr),
             sk->__sk_common.skc_v6_rcv_saddr.in6_u.u6_addr32);
@@ -316,11 +319,13 @@ TRACEPOINT_PROBE(sock, inet_sock_set_state)
     tx_b = tp->bytes_acked;
 
     if (args->family == AF_INET) {
-        struct ipv4_data_t data4 = {.span_us = delta_us,
-            .rx_b = rx_b, .tx_b = tx_b};
+        struct ipv4_data_t data4 = {};
+        data4.span_us = delta_us;
+        data4.rx_b = rx_b;
+        data4.tx_b = tx_b;
         data4.ts_us = bpf_ktime_get_ns() / 1000;
-        bpf_probe_read(&data4.saddr, sizeof(u32), args->saddr);
-        bpf_probe_read(&data4.daddr, sizeof(u32), args->daddr);
+        __builtin_memcpy(&data4.saddr, args->saddr, sizeof(data4.saddr));
+        __builtin_memcpy(&data4.daddr, args->daddr, sizeof(data4.daddr));
         // a workaround until data4 compiles with separate lport/dport
         data4.ports = dport + ((0ULL + lport) << 32);
         data4.pid = pid;
@@ -333,11 +338,13 @@ TRACEPOINT_PROBE(sock, inet_sock_set_state)
         ipv4_events.perf_submit(args, &data4, sizeof(data4));
 
     } else /* 6 */ {
-        struct ipv6_data_t data6 = {.span_us = delta_us,
-            .rx_b = rx_b, .tx_b = tx_b};
+        struct ipv6_data_t data6 = {};
+        data6.span_us = delta_us;
+        data6.rx_b = rx_b;
+        data6.tx_b = tx_b;
         data6.ts_us = bpf_ktime_get_ns() / 1000;
-        bpf_probe_read(&data6.saddr, sizeof(data6.saddr), args->saddr_v6);
-        bpf_probe_read(&data6.daddr, sizeof(data6.daddr), args->saddr_v6);
+        __builtin_memcpy(&data6.saddr, args->saddr_v6, sizeof(data6.saddr));
+        __builtin_memcpy(&data6.daddr, args->daddr_v6, sizeof(data6.daddr));
         // a workaround until data6 compiles with separate lport/dport
         data6.ports = dport + ((0ULL + lport) << 32);
         data6.pid = pid;
@@ -390,9 +397,9 @@ TASK_COMM_LEN = 16      # linux/sched.h
 class Data_ipv4(ct.Structure):
     _fields_ = [
         ("ts_us", ct.c_ulonglong),
-        ("pid", ct.c_ulonglong),
-        ("saddr", ct.c_ulonglong),
-        ("daddr", ct.c_ulonglong),
+        ("pid", ct.c_uint),
+        ("saddr", ct.c_uint),
+        ("daddr", ct.c_uint),
         ("ports", ct.c_ulonglong),
         ("rx_b", ct.c_ulonglong),
         ("tx_b", ct.c_ulonglong),
@@ -403,7 +410,7 @@ class Data_ipv4(ct.Structure):
 class Data_ipv6(ct.Structure):
     _fields_ = [
         ("ts_us", ct.c_ulonglong),
-        ("pid", ct.c_ulonglong),
+        ("pid", ct.c_uint),
         ("saddr", (ct.c_ulonglong * 2)),
         ("daddr", (ct.c_ulonglong * 2)),
         ("ports", ct.c_ulonglong),
@@ -447,7 +454,7 @@ def print_ipv4_event(cpu, data, size):
             print("%.6f," % delta_s, end="")
         else:
             print("%-9.6f " % delta_s, end="")
-    print(format_string % (event.pid, event.task.decode(),
+    print(format_string % (event.pid, event.task.decode('utf-8', 'replace'),
         "4" if args.wide or args.csv else "",
         inet_ntop(AF_INET, pack("I", event.saddr)), event.ports >> 32,
         inet_ntop(AF_INET, pack("I", event.daddr)), event.ports & 0xffffffff,
@@ -469,7 +476,7 @@ def print_ipv6_event(cpu, data, size):
             print("%.6f," % delta_s, end="")
         else:
             print("%-9.6f " % delta_s, end="")
-    print(format_string % (event.pid, event.task.decode(),
+    print(format_string % (event.pid, event.task.decode('utf-8', 'replace'),
         "6" if args.wide or args.csv else "",
         inet_ntop(AF_INET6, event.saddr), event.ports >> 32,
         inet_ntop(AF_INET6, event.daddr), event.ports & 0xffffffff,
@@ -499,4 +506,7 @@ start_ts = 0
 b["ipv4_events"].open_perf_buffer(print_ipv4_event, page_cnt=64)
 b["ipv6_events"].open_perf_buffer(print_ipv6_event, page_cnt=64)
 while 1:
-    b.perf_buffer_poll()
+    try:
+        b.perf_buffer_poll()
+    except KeyboardInterrupt:
+        exit()

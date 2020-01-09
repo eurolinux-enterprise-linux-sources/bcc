@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 # Copyright (c) PLUMgrid, Inc.
 # Licensed under the Apache License, Version 2.0 (the "License")
 
@@ -22,6 +22,7 @@ int count_sched(struct pt_regs *ctx, struct task_struct *prev) {
   key.curr_pid = bpf_get_current_pid_tgid();
   key.prev_pid = prev->pid;
 
+  // could also use `stats.increment(key);`
   val = stats.lookup_or_init(&key, &zero);
   (*val)++;
   return 0;

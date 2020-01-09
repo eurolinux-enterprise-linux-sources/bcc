@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 # @lint-avoid-python-3-compatibility-imports
 #
 # fileslower  Trace slow synchronous file reads and writes.
@@ -205,7 +205,7 @@ b.attach_kretprobe(event="__vfs_read", fn_name="trace_read_return")
 try:
     b.attach_kprobe(event="__vfs_write", fn_name="trace_write_entry")
     b.attach_kretprobe(event="__vfs_write", fn_name="trace_write_return")
-except:
+except Exception:
     # older kernels don't have __vfs_write so try vfs_write instead
     b.attach_kprobe(event="vfs_write", fn_name="trace_write_entry")
     b.attach_kretprobe(event="vfs_write", fn_name="trace_write_return")
@@ -240,14 +240,17 @@ def print_event(cpu, data, size):
     event = ct.cast(data, ct.POINTER(Data)).contents
 
     ms = float(event.delta_us) / 1000
-    name = event.name.decode()
+    name = event.name.decode('utf-8', 'replace')
     if event.name_len > DNAME_INLINE_LEN:
         name = name[:-3] + "..."
 
     print("%-8.3f %-14.14s %-6s %1s %-7s %7.2f %s" % (
-        time.time() - start_ts, event.comm.decode(), event.pid,
-        mode_s[event.mode], event.sz, ms, name))
+        time.time() - start_ts, event.comm.decode('utf-8', 'replace'),
+        event.pid, mode_s[event.mode], event.sz, ms, name))
 
 b["events"].open_perf_buffer(print_event, page_cnt=64)
 while 1:
-    b.perf_buffer_poll()
+    try:
+        b.perf_buffer_poll()
+    except KeyboardInterrupt:
+        exit()

@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 # @lint-avoid-python-3-compatibility-imports
 #
 # biolatency    Summarize block device I/O latency as a histogram.
@@ -67,7 +67,7 @@ int trace_req_start(struct pt_regs *ctx, struct request *req)
 }
 
 // output
-int trace_req_completion(struct pt_regs *ctx, struct request *req)
+int trace_req_done(struct pt_regs *ctx, struct request *req)
 {
     u64 *tsp, delta;
 
@@ -99,8 +99,9 @@ if args.disks:
         'BPF_HISTOGRAM(dist, disk_key_t);')
     bpf_text = bpf_text.replace('STORE',
         'disk_key_t key = {.slot = bpf_log2l(delta)}; ' +
-        'bpf_probe_read(&key.disk, sizeof(key.disk), ' +
-        'req->rq_disk->disk_name); dist.increment(key);')
+        'void *__tmp = (void *)req->rq_disk->disk_name; ' +
+        'bpf_probe_read(&key.disk, sizeof(key.disk), __tmp); ' +
+        'dist.increment(key);')
 else:
     bpf_text = bpf_text.replace('STORAGE', 'BPF_HISTOGRAM(dist);')
     bpf_text = bpf_text.replace('STORE',
@@ -115,10 +116,11 @@ b = BPF(text=bpf_text)
 if args.queued:
     b.attach_kprobe(event="blk_account_io_start", fn_name="trace_req_start")
 else:
-    b.attach_kprobe(event="blk_start_request", fn_name="trace_req_start")
+    if BPF.get_kprobe_functions(b'blk_start_request'):
+        b.attach_kprobe(event="blk_start_request", fn_name="trace_req_start")
     b.attach_kprobe(event="blk_mq_start_request", fn_name="trace_req_start")
-b.attach_kprobe(event="blk_account_io_completion",
-    fn_name="trace_req_completion")
+b.attach_kprobe(event="blk_account_io_done",
+    fn_name="trace_req_done")
 
 print("Tracing block device I/O... Hit Ctrl-C to end.")
 

@@ -54,10 +54,14 @@ class BLoader;
 class ClangLoader;
 class FuncSource;
 
+bool bpf_module_rw_engine_enabled(void);
+
 class BPFModule {
  private:
   static const std::string FN_PREFIX;
   int init_engine();
+  void initialize_rw_engine();
+  void cleanup_rw_engine();
   int parse(llvm::Module *mod);
   int finalize();
   int annotate();
@@ -76,12 +80,14 @@ class BPFModule {
                        const void *val);
 
  public:
-  BPFModule(unsigned flags, TableStorage *ts = nullptr, bool rw_engine_enabled = true);
+  BPFModule(unsigned flags, TableStorage *ts = nullptr, bool rw_engine_enabled = true,
+            const std::string &maps_ns = "");
   ~BPFModule();
   int load_b(const std::string &filename, const std::string &proto_filename);
   int load_c(const std::string &filename, const char *cflags[], int ncflags);
   int load_string(const std::string &text, const char *cflags[], int ncflags);
   std::string id() const { return id_; }
+  std::string maps_ns() const { return maps_ns_; }
   size_t num_functions() const;
   uint8_t * function_start(size_t id) const;
   uint8_t * function_start(const std::string &name) const;
@@ -137,6 +143,7 @@ class BPFModule {
   std::map<llvm::Type *, std::string> readers_;
   std::map<llvm::Type *, std::string> writers_;
   std::string id_;
+  std::string maps_ns_;
   std::string mod_src_;
   std::map<std::string, std::string> src_dbg_fmap_;
   TableStorage *ts_;

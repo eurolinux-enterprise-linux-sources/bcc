@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 # @lint-avoid-python-3-compatibility-imports
 #
 # ext4dist  Summarize ext4 operation latency.
@@ -110,14 +110,20 @@ static int trace_return(struct pt_regs *ctx, const char *op)
     if (tsp == 0) {
         return 0;   // missed start or filtered
     }
-    u64 delta = (bpf_ktime_get_ns() - *tsp) / FACTOR;
+    u64 delta = bpf_ktime_get_ns() - *tsp;
+    start.delete(&pid);
+
+    // Skip entries with backwards time: temp workaround for #728
+    if ((s64) delta < 0)
+        return 0;
+
+    delta /= FACTOR;
 
     // store as histogram
     dist_key_t key = {.slot = bpf_log2l(delta)};
     __builtin_memcpy(&key.op, op, sizeof(key.op));
     dist.increment(key);
 
-    start.delete(&pid);
     return 0;
 }
 
@@ -177,10 +183,10 @@ b = BPF(text=bpf_text)
 # Comment by Joe Yin 
 # From Linux 4.10, the function .read_iter at the ext4_file_operations has 
 # changed to ext4_file_read_iter.
-# So, I add get_kprobe_functions('ext4_file_read_iter'),it will first to attach ext4_file_read_iter,
+# So, I add get_kprobe_functions(b'ext4_file_read_iter'),it will first to attach ext4_file_read_iter,
 # if fails and will attach the generic_file_read_iter which used to pre-4.10.
 
-if BPF.get_kprobe_functions('ext4_file_read_iter'):
+if BPF.get_kprobe_functions(b'ext4_file_read_iter'):
 	b.attach_kprobe(event="ext4_file_read_iter", fn_name="trace_entry")
 else:
 	b.attach_kprobe(event="generic_file_read_iter", fn_name="trace_read_entry")

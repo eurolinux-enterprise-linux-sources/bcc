@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 #
 # wakeuptime    Summarize sleep to wakeup time by waker kernel stack
 #               For Linux, uses BCC, eBPF.
@@ -42,7 +42,7 @@ examples = """examples:
     ./wakeuptime 5           # trace for 5 seconds only
     ./wakeuptime -f 5        # 5 seconds, and output in folded format
     ./wakeuptime -u          # don't include kernel threads (user only)
-    ./wakeuptime -p 185      # trace fo PID 185 only
+    ./wakeuptime -p 185      # trace for PID 185 only
 """
 parser = argparse.ArgumentParser(
     description="Summarize sleep to wakeup time by waker kernel stack",
@@ -134,14 +134,12 @@ int waker(struct pt_regs *ctx, struct task_struct *p) {
         return 0;
 
     struct key_t key = {};
-    u64 zero = 0, *val;
 
     key.w_k_stack_id = stack_traces.get_stackid(ctx, BPF_F_REUSE_STACKID);
     bpf_probe_read(&key.target, sizeof(key.target), p->comm);
     bpf_get_current_comm(&key.waker, sizeof(key.waker));
 
-    val = counts.lookup_or_init(&key, &zero);
-    (*val) += delta;
+    counts.increment(key, delta);
     return 0;
 }
 """

@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 # @lint-avoid-python-3-compatibility-imports
 #
 # profile  Profile CPU usage by sampling stack traces at a timed interval.
@@ -145,7 +145,6 @@ int do_perf_event(struct bpf_perf_event_data *ctx) {
         return 0;
 
     // create map key
-    u64 zero = 0, *val;
     struct key_t key = {.pid = pid};
     bpf_get_current_comm(&key.name, sizeof(key.name));
 
@@ -180,8 +179,7 @@ int do_perf_event(struct bpf_perf_event_data *ctx) {
         }
     }
 
-    val = counts.lookup_or_init(&key, &zero);
-    (*val)++;
+    counts.increment(key);
     return 0;
 }
 """
@@ -270,7 +268,7 @@ if not args.folded:
 
 def aksym(addr):
     if args.annotations:
-        return b.ksym(addr) + "_[k]"
+        return b.ksym(addr) + "_[k]".encode()
     else:
         return b.ksym(addr)
 
@@ -322,7 +320,7 @@ for k, v in sorted(counts.items(), key=lambda counts: counts[1].value):
                 line.append("[Missed Kernel Stack]")
             else:
                 line.extend([b.ksym(addr) for addr in reversed(kernel_stack)])
-        print("%s %d" % (b";".join(line).decode(), v.value))
+        print("%s %d" % (b";".join(line).decode('utf-8', 'replace'), v.value))
     else:
         # print default multi-line stack output
         if not args.user_stacks_only:
@@ -338,8 +336,8 @@ for k, v in sorted(counts.items(), key=lambda counts: counts[1].value):
                 print("    [Missed User Stack]")
             else:
                 for addr in user_stack:
-                    print("    %s" % b.sym(addr, k.pid).decode())
-        print("    %-16s %s (%d)" % ("-", k.name.decode(), k.pid))
+                    print("    %s" % b.sym(addr, k.pid).decode('utf-8', 'replace'))
+        print("    %-16s %s (%d)" % ("-", k.name.decode('utf-8', 'replace'), k.pid))
         print("        %d\n" % v.value)
 
 # check missing

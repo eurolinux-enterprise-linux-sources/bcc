@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 #
 # bashreadline  Print entered bash commands from all running shells.
 #               For Linux, uses BCC, eBPF. Embedded C.
@@ -57,8 +57,11 @@ print("%-9s %-6s %s" % ("TIME", "PID", "COMMAND"))
 def print_event(cpu, data, size):
     event = ct.cast(data, ct.POINTER(Data)).contents
     print("%-9s %-6d %s" % (strftime("%H:%M:%S"), event.pid,
-                            event.str.decode()))
+                            event.str.decode('utf-8', 'replace')))
 
 b["events"].open_perf_buffer(print_event)
 while 1:
-    b.perf_buffer_poll()
+    try:
+        b.perf_buffer_poll()
+    except KeyboardInterrupt:
+        exit()

@@ -1212,5 +1212,43 @@ int test(struct pt_regs *ctx, struct mm_struct *mm) {
         b = BPF(text=text)
         fn = b.load_func("test", BPF.KPROBE)
 
+    def test_arbitrary_increment_simple(self):
+        b = BPF(text=b"""
+#include <uapi/linux/ptrace.h>
+struct bpf_map;
+BPF_HASH(map);
+int map_delete(struct pt_regs *ctx, struct bpf_map *bpfmap, u64 *k) {
+    map.increment(42, 10);
+    return 0;
+}
+""")
+        b.attach_kprobe(event=b"htab_map_delete_elem", fn_name=b"map_delete")
+        b.cleanup()
+
+    @skipUnless(kernel_version_ge(4,7), "requires kernel >= 4.7")
+    def test_packed_structure(self):
+        b = BPF(text=b"""
+struct test {
+    u16 a;
+    u32 b;
+} __packed;
+BPF_TABLE("hash", u32, struct test, testing, 2);
+TRACEPOINT_PROBE(kmem, kmalloc) {
+    u32 key = 0;
+    struct test info, *entry;
+    entry = testing.lookup(&key);
+    if (entry == NULL) {
+        info.a = 10;
+        info.b = 20;
+        testing.update(&key, &info);
+    }
+    return 0;
+}
+""")
+        if len(b["testing"].items()):
+            st = b["testing"][ct.c_uint(0)]
+            self.assertEqual(st.a, 10)
+            self.assertEqual(st.b, 20)
+
 if __name__ == "__main__":
     main()

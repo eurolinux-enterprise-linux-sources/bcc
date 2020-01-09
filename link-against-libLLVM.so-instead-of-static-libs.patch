@@ -16,12 +16,12 @@ index 8ddfd8f..0c3d7df 100644
  # bcc_common_libs_for_s for shared libraries
  set(bcc_common_libs_for_a b_frontend clang_frontend bpf-static
 -  -Wl,--whole-archive ${clang_libs} ${llvm_libs} -Wl,--no-whole-archive
-+  -Wl,--whole-archive ${clang_libs} libLLVM-6.0-rhel.so -Wl,--no-whole-archive
++  -Wl,--whole-archive ${clang_libs} libLLVM-7-rhel.so -Wl,--no-whole-archive
    ${LIBELF_LIBRARIES})
  set(bcc_common_libs_for_s ${bcc_common_libs_for_a})
  set(bcc_common_libs_for_lua b_frontend clang_frontend bpf-static
 -  ${clang_libs} ${llvm_libs} ${LIBELF_LIBRARIES})
-+  ${clang_libs} libLLVM-6.0-rhel.so ${LIBELF_LIBRARIES})
++  ${clang_libs} libLLVM-7-rhel.so ${LIBELF_LIBRARIES})
  
  if(ENABLE_CPP_API)
    add_subdirectory(api)

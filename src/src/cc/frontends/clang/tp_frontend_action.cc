@@ -28,6 +28,7 @@
 #include <clang/Frontend/MultiplexConsumer.h>
 #include <clang/Rewrite/Core/Rewriter.h>
 
+#include "frontend_action_common.h"
 #include "tp_frontend_action.h"
 
 namespace ebpf {
@@ -114,17 +115,19 @@ static inline field_kind_t _get_field_kind(string const& line,
     if (field_type == "char" || field_type == "short" ||
         field_type == "int8_t" || field_type == "int16_t")
       field_type = "s32";
-    if (field_type == "unsigned char" || field_type == "unsiggned short" ||
+    if (field_type == "unsigned char" || field_type == "unsigned short" ||
         field_type == "uint8_t" || field_type == "uint16_t")
       field_type = "u32";
   } else if (size == 8) {
     if (field_type == "char" || field_type == "short" || field_type == "int" ||
         field_type == "int8_t" || field_type == "int16_t" ||
-        field_type == "int32_t")
+        field_type == "int32_t" || field_type == "pid_t")
       field_type = "s64";
-    if (field_type == "unsigned char" || field_type == "unsiggned short" ||
+    if (field_type == "unsigned char" || field_type == "unsigned short" ||
         field_type == "unsigned int" || field_type == "uint8_t" ||
-        field_type == "uint16_t" || field_type == "uint32_t")
+        field_type == "uint16_t" || field_type == "uint32_t" ||
+        field_type == "unsigned" || field_type == "u32" ||
+        field_type == "uid_t" || field_type == "gid_t")
       field_type = "u64";
   }
 
@@ -209,11 +212,11 @@ bool TracepointTypeVisitor::VisitFunctionDecl(FunctionDecl *D) {
         string tp_cat, tp_evt;
         if (_is_tracepoint_struct_type(type_name, tp_cat, tp_evt)) {
           string tp_struct = GenerateTracepointStruct(
-              D->getLocStart(), tp_cat, tp_evt);
+              GET_BEGINLOC(D), tp_cat, tp_evt);
           // Get the actual function declaration point (the macro instantiation
           // point if using the TRACEPOINT_PROBE macro instead of the macro
           // declaration point in bpf_helpers.h).
-          auto insert_loc = D->getLocStart();
+          auto insert_loc = GET_BEGINLOC(D);
           insert_loc = rewriter_.getSourceMgr().getFileLoc(insert_loc);
           rewriter_.InsertText(insert_loc, tp_struct);
         }

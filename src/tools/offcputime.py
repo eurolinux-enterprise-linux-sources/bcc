@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env python
 #
 # offcputime    Summarize off-CPU time by stack trace
 #               For Linux, uses BCC, eBPF.
@@ -156,7 +156,6 @@ int oncpu(struct pt_regs *ctx, struct task_struct *prev) {
     }
 
     // create map key
-    u64 zero = 0, *val;
     struct key_t key = {};
 
     key.pid = pid;
@@ -165,8 +164,7 @@ int oncpu(struct pt_regs *ctx, struct task_struct *prev) {
     key.kernel_stack_id = KERNEL_STACK_GET;
     bpf_get_current_comm(&key.name, sizeof(key.name));
 
-    val = counts.lookup_or_init(&key, &zero);
-    (*val) += delta;
+    counts.increment(key, delta);
     return 0;
 }
 """
@@ -283,7 +281,7 @@ for k, v in sorted(counts.items(), key=lambda counts: counts[1].value):
         # print folded stack output
         user_stack = list(user_stack)
         kernel_stack = list(kernel_stack)
-        line = [k.name.decode()]
+        line = [k.name.decode('utf-8', 'replace')]
         # if we failed to get the stack is, such as due to no space (-ENOMEM) or
         # hash collision (-EEXIST), we still print a placeholder for consistency
         if not args.kernel_stacks_only:
@@ -314,7 +312,7 @@ for k, v in sorted(counts.items(), key=lambda counts: counts[1].value):
             else:
                 for addr in user_stack:
                     print("    %s" % b.sym(addr, k.tgid))
-        print("    %-16s %s (%d)" % ("-", k.name.decode(), k.pid))
+        print("    %-16s %s (%d)" % ("-", k.name.decode('utf-8', 'replace'), k.pid))
         print("        %d\n" % v.value)
 
 if missing_stacks > 0:

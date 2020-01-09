@@ -27,6 +27,7 @@ basestring = (unicode if sys.version_info[0] < 3 else str)
 from .libbcc import lib, bcc_symbol, bcc_symbol_option, _SYM_CB_TYPE
 from .table import Table, PerfEventArray
 from .perf import Perf
+from .syscall import syscall_name
 from .utils import get_online_cpus, printb, _assert_is_bytes, ArgString
 from .version import __version__
 
@@ -167,10 +168,11 @@ class BPF(object):
     }
 
     _syscall_prefixes = [
-        "sys_",
-        "__x64_sys_",
-        "__x32_compat_sys_",
-        "__ia32_compat_sys_",
+        b"sys_",
+        b"__x64_sys_",
+        b"__x32_compat_sys_",
+        b"__ia32_compat_sys_",
+        b"__arm64_sys_",
     ]
 
     # BPF timestamps come from the monotonic clock. To be able to filter
@@ -427,7 +429,8 @@ class BPF(object):
                 elif isinstance(t[2], int):
                     fields.append((t[0], BPF._decode_table_type(t[1]), t[2]))
                 elif isinstance(t[2], basestring) and (
-                        t[2] == u"union" or t[2] == u"struct"):
+                        t[2] == u"union" or t[2] == u"struct" or
+                        t[2] == u"struct_packed"):
                     name = t[0]
                     if name == "":
                         name = "__anon%d" % len(anon)
@@ -438,13 +441,21 @@ class BPF(object):
             else:
                 raise Exception("Failed to decode type %s" % str(t))
         base = ct.Structure
+        is_packed = False
         if len(desc) > 2:
             if desc[2] == u"union":
                 base = ct.Union
             elif desc[2] == u"struct":
                 base = ct.Structure
-        cls = type(str(desc[0]), (base,), dict(_anonymous_=anon,
-            _fields_=fields))
+            elif desc[2] == u"struct_packed":
+                base = ct.Structure
+                is_packed = True
+        if is_packed:
+            cls = type(str(desc[0]), (base,), dict(_anonymous_=anon, _pack_=1,
+                _fields_=fields))
+        else:
+            cls = type(str(desc[0]), (base,), dict(_anonymous_=anon,
+                _fields_=fields))
         return cls
 
     def get_table(self, name, keytype=None, leaftype=None, reducer=None):
@@ -505,9 +516,12 @@ class BPF(object):
         fns = []
 
         in_init_section = 0
+        in_irq_section = 0
         with open("/proc/kallsyms", "rb") as avail_file:
             for line in avail_file:
                 (t, fn) = line.rstrip().split()[1:3]
+                # Skip all functions defined between __init_begin and
+                # __init_end
                 if in_init_section == 0:
                     if fn == b'__init_begin':
                         in_init_section = 1
@@ -515,6 +529,26 @@ class BPF(object):
                 elif in_init_section == 1:
                     if fn == b'__init_end':
                         in_init_section = 2
+                    continue
+                # Skip all functions defined between __irqentry_text_start and
+                # __irqentry_text_end
+                if in_irq_section == 0:
+                    if fn == b'__irqentry_text_start':
+                        in_irq_section = 1
+                        continue
+                elif in_irq_section == 1:
+                    if fn == b'__irqentry_text_end':
+                        in_irq_section = 2
+                    continue
+                # All functions defined as NOKPROBE_SYMBOL() start with the
+                # prefix _kbl_addr_*, blacklisting them by looking at the name
+                # allows to catch also those symbols that are defined in kernel
+                # modules.
+                if fn.startswith(b'_kbl_addr_'):
+                    continue
+                # Explicitly blacklist perf-related functions, they are all
+                # non-attachable.
+                elif fn.startswith(b'__perf') or fn.startswith(b'perf_'):
                     continue
                 if (t.lower() in [b't', b'w']) and re.match(event_re, fn) \
                     and fn not in blacklist:
@@ -551,7 +585,7 @@ class BPF(object):
     # would probably lead to error in later API calls.
     def get_syscall_prefix(self):
         for prefix in self._syscall_prefixes:
-            if self.ksymname("{}bpf".format(prefix)) != -1:
+            if self.ksymname(b"%sbpf" % prefix) != -1:
                 return prefix
         return self._syscall_prefixes[0]
 
@@ -559,12 +593,14 @@ class BPF(object):
     # system's syscall prefix. For example, given "clone" the helper would
     # return "sys_clone" or "__x64_sys_clone".
     def get_syscall_fnname(self, name):
+        name = _assert_is_bytes(name)
         return self.get_syscall_prefix() + name
 
     # Given a Kernel function name that represents a syscall but already has a
     # prefix included, transform it to current system's prefix. For example,
     # if "sys_clone" provided, the helper may translate it to "__x64_sys_clone".
     def fix_syscall_fnname(self, name):
+        name = _assert_is_bytes(name)
         for prefix in self._syscall_prefixes:
             if name.startswith(prefix):
                 return self.get_syscall_fnname(name[len(prefix):])
@@ -591,7 +627,8 @@ class BPF(object):
         ev_name = b"p_" + event.replace(b"+", b"_").replace(b".", b"_")
         fd = lib.bpf_attach_kprobe(fn.fd, 0, ev_name, event, event_off)
         if fd < 0:
-            raise Exception("Failed to attach BPF to kprobe")
+            raise Exception("Failed to attach BPF program %s to kprobe %s" %
+                            (fn_name, event))
         self._add_kprobe_fd(ev_name, fd)
         return self
 
@@ -612,15 +649,16 @@ class BPF(object):
         self._check_probe_quota(1)
         fn = self.load_func(fn_name, BPF.KPROBE)
         ev_name = b"r_" + event.replace(b"+", b"_").replace(b".", b"_")
-        fd = lib.bpf_attach_kprobe(fn.fd, 1, ev_name, event)
+        fd = lib.bpf_attach_kprobe(fn.fd, 1, ev_name, event, 0)
         if fd < 0:
-            raise Exception("Failed to attach BPF to kretprobe")
+            raise Exception("Failed to attach BPF program %s to kretprobe %s" %
+                            (fn_name, event))
         self._add_kprobe_fd(ev_name, fd)
         return self
 
     def detach_kprobe_event(self, ev_name):
         if ev_name not in self.kprobe_fds:
-            raise Exception("Kprobe %s is not attached" % event)
+            raise Exception("Kprobe %s is not attached" % ev_name)
         res = lib.bpf_close_perf_event_fd(self.kprobe_fds[ev_name])
         if res < 0:
             raise Exception("Failed to close kprobe FD")
@@ -755,7 +793,8 @@ class BPF(object):
         (tp_category, tp_name) = tp.split(b':')
         fd = lib.bpf_attach_tracepoint(fn.fd, tp_category, tp_name)
         if fd < 0:
-            raise Exception("Failed to attach BPF to tracepoint")
+            raise Exception("Failed to attach BPF program %s to tracepoint %s" %
+                            (fn_name, tp))
         self.tracepoint_fds[tp] = fd
         return self
 
@@ -1219,6 +1258,9 @@ class BPF(object):
         Deprecated. Use perf_buffer_poll instead.
         """
         self.perf_buffer_poll(timeout)
+
+    def free_bcc_memory(self):
+        return lib.bcc_free_memory()
 
     def donothing(self):
         """the do nothing exit handler"""

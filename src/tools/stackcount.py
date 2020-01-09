@@ -128,9 +128,7 @@ int trace_count(void *ctx) {
     key.tgid = GET_TGID;
     STORE_COMM
     %s
-    u64 zero = 0;
-    u64 *val = counts.lookup_or_init(&key, &zero);
-    (*val)++;
+    counts.increment(key);
     return 0;
 }
         """
@@ -341,7 +339,7 @@ class Tool(object):
                     # print folded stack output
                     user_stack = list(user_stack)
                     kernel_stack = list(kernel_stack)
-                    line = [k.name.decode()] + \
+                    line = [k.name.decode('utf-8', 'replace')] + \
                         [b.sym(addr, k.tgid) for addr in
                         reversed(user_stack)] + \
                         (self.need_delimiter and ["-"] or []) + \

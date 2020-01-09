@@ -107,14 +107,17 @@ std::pair<bool, string> get_kernel_path_info(const string kdir)
 int ClangLoader::parse(unique_ptr<llvm::Module> *mod, TableStorage &ts,
                        const string &file, bool in_memory, const char *cflags[],
                        int ncflags, const std::string &id, FuncSource &func_src,
-                       std::string &mod_src) {
+                       std::string &mod_src,
+                       const std::string &maps_ns) {
   string main_path = "/virtual/main.c";
   unique_ptr<llvm::MemoryBuffer> main_buf;
   struct utsname un;
   uname(&un);
   string kdir, kpath;
   const char *kpath_env = ::getenv("BCC_KERNEL_SOURCE");
+  const char *version_override = ::getenv("BCC_LINUX_VERSION_CODE");
   bool has_kpath_source = false;
+  string vmacro;
 
   if (kpath_env) {
     kpath = string(kpath_env);
@@ -175,6 +178,15 @@ int ClangLoader::parse(unique_ptr<llvm::Module> *mod, TableStorage &ts,
     flags_cstr.push_back(it->c_str());
 
   vector<const char *> flags_cstr_rem;
+
+  if (version_override) {
+    vmacro = "-DLINUX_VERSION_CODE_OVERRIDE=" + string(version_override);
+
+    std::cout << "WARNING: Linux version for eBPF program is being overridden with: " << version_override << "\n";
+    std::cout << "WARNING: Due to this, the results of the program may be unpredictable\n";
+    flags_cstr_rem.push_back(vmacro.c_str());
+  }
+
   flags_cstr_rem.push_back("-include");
   flags_cstr_rem.push_back("/virtual/include/bcc/helpers.h");
   flags_cstr_rem.push_back("-isystem");
@@ -189,7 +201,7 @@ int ClangLoader::parse(unique_ptr<llvm::Module> *mod, TableStorage &ts,
 #endif
 
   if (do_compile(mod, ts, in_memory, flags_cstr, flags_cstr_rem, main_path,
-                 main_buf, id, func_src, mod_src, true)) {
+                 main_buf, id, func_src, mod_src, true, maps_ns)) {
 #if BCC_BACKUP_COMPILE != 1
     return -1;
 #else
@@ -200,7 +212,7 @@ int ClangLoader::parse(unique_ptr<llvm::Module> *mod, TableStorage &ts,
     func_src.clear();
     mod_src.clear();
     if (do_compile(mod, ts, in_memory, flags_cstr, flags_cstr_rem, main_path,
-                   main_buf, id, func_src, mod_src, false))
+                   main_buf, id, func_src, mod_src, false, maps_ns))
       return -1;
 #endif
   }
@@ -246,7 +258,8 @@ int ClangLoader::do_compile(unique_ptr<llvm::Module> *mod, TableStorage &ts,
                             const std::string &main_path,
                             const unique_ptr<llvm::MemoryBuffer> &main_buf,
                             const std::string &id, FuncSource &func_src,
-                            std::string &mod_src, bool use_internal_bpfh) {
+                            std::string &mod_src, bool use_internal_bpfh,
+                            const std::string &maps_ns) {
   using namespace clang;
 
   vector<const char *> flags_cstr = flags_cstr_in;
@@ -293,7 +306,7 @@ int ClangLoader::do_compile(unique_ptr<llvm::Module> *mod, TableStorage &ts,
   }
 
   // Initialize a compiler invocation object from the clang (-cc1) arguments.
-  const driver::ArgStringList &ccargs = cmd.getArguments();
+  const llvm::opt::ArgStringList &ccargs = cmd.getArguments();
 
   if (flags_ & DEBUG_PREPROCESSOR) {
     llvm::errs() << "clang";
@@ -360,7 +373,7 @@ int ClangLoader::do_compile(unique_ptr<llvm::Module> *mod, TableStorage &ts,
   // capture the rewritten c file
   string out_str1;
   llvm::raw_string_ostream os1(out_str1);
-  BFrontendAction bact(os1, flags_, ts, id, main_path, func_src, mod_src);
+  BFrontendAction bact(os1, flags_, ts, id, main_path, func_src, mod_src, maps_ns);
   if (!compiler1.ExecuteAction(bact))
     return -1;
   unique_ptr<llvm::MemoryBuffer> out_buf1 = llvm::MemoryBuffer::getMemBuffer(out_str1);

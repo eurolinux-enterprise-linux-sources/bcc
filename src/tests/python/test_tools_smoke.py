@@ -240,7 +240,7 @@ class SmokeTests(TestCase):
     def test_offwaketime(self):
         self.run_with_duration("offwaketime.py 1")
 
-    @skipUnless(kernel_version_ge(4,4), "requires kernel >= 4.4")
+    @skipUnless(kernel_version_ge(4,9), "requires kernel >= 4.9")
     def test_oomkill(self):
         self.run_with_int("oomkill.py")
 
@@ -261,6 +261,14 @@ class SmokeTests(TestCase):
     @skipUnless(kernel_version_ge(4,9), "requires kernel >= 4.9")
     def test_runqlen(self):
         self.run_with_duration("runqlen.py 1 1")
+
+    @skipUnless(kernel_version_ge(4,8), "requires kernel >= 4.8")
+    def test_shmsnoop(self):
+        self.run_with_int("shmsnoop.py")
+
+    @skipUnless(kernel_version_ge(4,8), "requires kernel >= 4.8")
+    def test_sofdsnoop(self):
+        self.run_with_int("sofdsnoop.py")
 
     def test_slabratetop(self):
         self.run_with_duration("slabratetop.py 1 1")
@@ -332,12 +340,9 @@ class SmokeTests(TestCase):
     def test_ttysnoop(self):
         self.run_with_int("ttysnoop.py /dev/console")
 
-    @skipUnless(kernel_version_ge(4,4), "requires kernel >= 4.4")
+    @skipUnless(kernel_version_ge(4,7), "requires kernel >= 4.7")
     def test_ucalls(self):
-        # This attaches a large number (300+) kprobes, which can be slow,
-        # so use an increased timeout value.
-        self.run_with_int("lib/ucalls.py -l none -S %d" % os.getpid(),
-                          timeout=60, kill_timeout=60)
+        self.run_with_int("lib/ucalls.py -l none -S %d" % os.getpid())
 
     @skipUnless(kernel_version_ge(4,4), "requires kernel >= 4.4")
     def test_uflow(self):

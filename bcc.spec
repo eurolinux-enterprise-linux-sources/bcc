@@ -10,17 +10,14 @@
 %endif
 
 Name:           bcc
-Version:        0.6.1
-Release:        2%{?dist}
+Version:        0.8.0
+Release:        1%{?dist}
 Summary:        BPF Compiler Collection (BCC)
 License:        ASL 2.0
 URL:            https://github.com/iovisor/bcc
 Source0:        %{url}/archive/v%{version}/%{name}-%{version}.tar.gz
 Patch0:         link-against-libLLVM.so-instead-of-static-libs.patch
 Patch1:         Fix-tools-for-RHEL-7.patch
-Patch2:         sslsniff-add-NSS-support-1908.patch
-Patch3:         llcstat-print-a-nicer-error-message-when-hardware-ev.patch
-Patch4:         Miscellaneous-fixes-1914.patch
 # tests/cc doesn't compile on s390x, so disable it until we have a better fix
 Patch10:         Disable-tests-cc.patch
 
@@ -99,9 +96,6 @@ Command line tools for BPF Compiler Collection (BCC)
 %setup
 %patch0 -p1
 %patch1 -p1
-%patch2 -p1
-%patch3 -p1
-%patch4 -p1
 
 %ifarch s390x
 %patch10 -p1
@@ -182,6 +176,10 @@ mv %{buildroot}%{_datadir}/%{name}/examples %{buildroot}%{_docdir}/%{name}/
 
 
 %changelog
+* Mon Jan 28 2019 Jerome Marchand <jmarchan@redhat.com> - 0.8.0-1
+- Rebase on bcc-8.0.0
+- Update libLLVM.so name for 7.0
+
 * Fri Sep 21 2018 Jerome Marchand <jmarchan@redhat.com> - 0.6.1-2
 - Set a minimal version for llvm-private(-devel)
 

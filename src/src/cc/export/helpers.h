@@ -17,6 +17,21 @@ R"********(
 #ifndef __BPF_HELPERS_H
 #define __BPF_HELPERS_H
 
+/* Before bpf_helpers.h is included, uapi bpf.h has been
+ * included, which references linux/types.h. This will bring
+ * in asm_volatile_goto definition if permitted based on
+ * compiler setup and kernel configs.
+ *
+ * clang does not support "asm volatile goto" yet.
+ * So redefine asm_volatile_goto to some invalid asm code.
+ * If asm_volatile_goto is actually used by the bpf program,
+ * a compilation error will appear.
+ */
+#ifdef asm_volatile_goto
+#undef asm_volatile_goto
+#define asm_volatile_goto(x...) asm volatile("invalid use of asm_volatile_goto")
+#endif
+
 #include <uapi/linux/bpf.h>
 #include <uapi/linux/if_packet.h>
 #include <linux/version.h>
@@ -49,7 +64,7 @@ struct _name##_table_t { \
   int (*insert) (_key_type *, _leaf_type *); \
   int (*delete) (_key_type *); \
   void (*call) (void *, int index); \
-  void (*increment) (_key_type); \
+  void (*increment) (_key_type, ...); \
   int (*get_stackid) (void *, u64); \
   u32 max_entries; \
   int flags; \
@@ -64,6 +79,12 @@ BPF_F_TABLE(_table_type, _key_type, _leaf_type, _name, _max_entries, 0)
 #define BPF_TABLE_PUBLIC(_table_type, _key_type, _leaf_type, _name, _max_entries) \
 BPF_TABLE(_table_type, _key_type, _leaf_type, _name, _max_entries); \
 __attribute__((section("maps/export"))) \
+struct _name##_table_t __##_name
+
+// define a table that is shared accross the programs in the same namespace
+#define BPF_TABLE_SHARED(_table_type, _key_type, _leaf_type, _name, _max_entries) \
+BPF_TABLE(_table_type, _key_type, _leaf_type, _name, _max_entries); \
+__attribute__((section("maps/shared"))) \
 struct _name##_table_t __##_name
 
 // Identifier for current CPU used in perf_submit and perf_read
@@ -222,7 +243,11 @@ struct _name##_table_t _name = { .max_entries = (_max_entries) }
 #define cursor_advance(_cursor, _len) \
   ({ void *_tmp = _cursor; _cursor += _len; _tmp; })
 
+#ifdef LINUX_VERSION_CODE_OVERRIDE
+unsigned _version SEC("version") = LINUX_VERSION_CODE_OVERRIDE;
+#else
 unsigned _version SEC("version") = LINUX_VERSION_CODE;
+#endif
 
 /* helper functions called from eBPF programs written in C */
 static void *(*bpf_map_lookup_elem)(void *map, void *key) =
@@ -395,6 +420,40 @@ static int (*bpf_rc_keydown)(void *ctx, u32 protocol, u64 scancode, u32 toggle) 
   (void *) BPF_FUNC_rc_keydown;
 static int (*bpf_rc_repeat)(void *ctx) =
   (void *) BPF_FUNC_rc_repeat;
+static u64 (*bpf_skb_cgroup_id)(void *skb) =
+  (void *) BPF_FUNC_skb_cgroup_id;
+static u64 (*bpf_get_current_cgroup_id)(void) =
+  (void *) BPF_FUNC_get_current_cgroup_id;
+static u64 (*bpf_skb_ancestor_cgroup_id)(void *skb, int ancestor_level) =
+  (void *) BPF_FUNC_skb_ancestor_cgroup_id;
+static void * (*bpf_get_local_storage)(void *map, u64 flags) =
+  (void *) BPF_FUNC_get_local_storage;
+static int (*bpf_sk_select_reuseport)(void *reuse, void *map, void *key, u64 flags) =
+  (void *) BPF_FUNC_sk_select_reuseport;
+static struct bpf_sock *(*bpf_sk_lookup_tcp)(void *ctx,
+                                             struct bpf_sock_tuple *tuple,
+                                             int size, unsigned int netns_id,
+                                             unsigned long long flags) =
+  (void *) BPF_FUNC_sk_lookup_tcp;
+static struct bpf_sock *(*bpf_sk_lookup_udp)(void *ctx,
+                                             struct bpf_sock_tuple *tuple,
+                                             int size, unsigned int netns_id,
+                                             unsigned long long flags) =
+  (void *) BPF_FUNC_sk_lookup_udp;
+static int (*bpf_sk_release)(struct bpf_sock *sk) =
+  (void *) BPF_FUNC_sk_release;
+static int (*bpf_map_push_elem)(void *map, const void *value, u64 flags) =
+  (void *) BPF_FUNC_map_push_elem;
+static int (*bpf_map_pop_elem)(void *map, void *value) =
+  (void *) BPF_FUNC_map_pop_elem;
+static int (*bpf_map_peek_elem)(void *map, void *value) =
+  (void *) BPF_FUNC_map_peek_elem;
+static int (*bpf_msg_push_data)(void *skb, u32 start, u32 len, u64 flags) =
+  (void *) BPF_FUNC_msg_push_data;
+static int (*bpf_msg_pop_data)(void *msg, u32 start, u32 pop, u64 flags) =
+  (void *) BPF_FUNC_msg_pop_data;
+static int (*bpf_rc_pointer_rel)(void *ctx, s32 rel_x, s32 rel_y) =
+  (void *) BPF_FUNC_rc_pointer_rel;
 
 /* llvm builtin functions that eBPF C program may use to
  * emit BPF_LD_ABS and BPF_LD_IND instructions
@@ -697,6 +756,7 @@ int bpf_usdt_readarg_p(int argc, struct pt_regs *ctx, void *buf, u64 len) asm("l
 #define PT_REGS_PARM4(ctx)	((ctx)->cx)
 #define PT_REGS_PARM5(ctx)	((ctx)->r8)
 #define PT_REGS_PARM6(ctx)	((ctx)->r9)
+#define PT_REGS_RET(ctx)	((ctx)->sp)
 #define PT_REGS_FP(ctx)         ((ctx)->bp) /* Works only with CONFIG_FRAME_POINTER */
 #define PT_REGS_RC(ctx)		((ctx)->ax)
 #define PT_REGS_IP(ctx)		((ctx)->ip)

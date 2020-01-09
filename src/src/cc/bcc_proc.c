@@ -99,7 +99,7 @@ int bcc_procutils_each_module(int pid, bcc_procutils_modulecb callback,
   while (true) {
     buf[0] = '\0';
     // From fs/proc/task_mmu.c:show_map_vma
-    if (fscanf(procmap, "%lx-%lx %s %llx %s %lu%[^\n]", &begin, &end, perm,
+    if (fscanf(procmap, "%lx-%lx %4s %llx %7s %lu%[^\n]", &begin, &end, perm,
                &offset, dev, &inode, buf) != 7)
       break;
 
@@ -406,9 +406,9 @@ void bcc_procutils_free(const char *ptr) {
 }
 
 /* Detects the following languages + C. */
-const char *languages[] = {"java", "python", "ruby", "php", "node"};
+const char *languages[] = {"java", "node", "perl", "php", "python", "ruby"};
 const char *language_c = "c";
-const int nb_languages = 5;
+const int nb_languages = 6;
 
 const char *bcc_procutils_language(int pid) {
   char procfilename[24], line[4096], pathname[32], *str;
@@ -446,8 +446,10 @@ const char *bcc_procutils_language(int pid) {
       while (isspace(mapname[0])) mapname++;
       for (i = 0; i < nb_languages; i++) {
         snprintf(pathname, sizeof(pathname), "/lib%s", languages[i]);
-        if (strstr(mapname, pathname))
+        if (strstr(mapname, pathname)) {
+          fclose(procfile);
           return languages[i];
+	}
         if ((str = strstr(mapname, "libc")) &&
             (str[4] == '-' || str[4] == '.'))
           libc = true;

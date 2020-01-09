@@ -48,6 +48,7 @@ class Probe(object):
                 cls.tgid = args.tgid or -1
                 cls.pid = args.pid or -1
                 cls.page_cnt = args.buffer_pages
+                cls.bin_cmp = args.bin_cmp
 
         def __init__(self, probe, string_size, kernel_stack, user_stack):
                 self.usdt = None
@@ -179,10 +180,10 @@ class Probe(object):
 
         def _parse_types(self, fmt):
                 for match in re.finditer(
-                            r'[^%]%(s|u|d|llu|lld|hu|hd|x|llx|c|K|U)', fmt):
+                            r'[^%]%(s|u|d|lu|llu|ld|lld|hu|hd|x|lx|llx|c|K|U)', fmt):
                         self.types.append(match.group(1))
-                fmt = re.sub(r'([^%]%)(u|d|llu|lld|hu|hd)', r'\1d', fmt)
-                fmt = re.sub(r'([^%]%)(x|llx)', r'\1x', fmt)
+                fmt = re.sub(r'([^%]%)(u|d|lu|llu|ld|lld|hu|hd)', r'\1d', fmt)
+                fmt = re.sub(r'([^%]%)(x|lx|llx)', r'\1x', fmt)
                 fmt = re.sub('%K|%U', '%s', fmt)
                 self.python_format = fmt.strip('"')
 
@@ -215,17 +216,17 @@ class Probe(object):
         }
 
         aliases_indarg = {
-                "arg1": "({u64 _val; struct pt_regs *_ctx = PT_REGS_PARM1(ctx);"
+                "arg1": "({u64 _val; struct pt_regs *_ctx = (struct pt_regs *)PT_REGS_PARM1(ctx);"
                         "  bpf_probe_read(&_val, sizeof(_val), &(PT_REGS_PARM1(_ctx))); _val;})",
-                "arg2": "({u64 _val; struct pt_regs *_ctx = PT_REGS_PARM2(ctx);"
+                "arg2": "({u64 _val; struct pt_regs *_ctx = (struct pt_regs *)PT_REGS_PARM2(ctx);"
                         "  bpf_probe_read(&_val, sizeof(_val), &(PT_REGS_PARM2(_ctx))); _val;})",
-                "arg3": "({u64 _val; struct pt_regs *_ctx = PT_REGS_PARM3(ctx);"
+                "arg3": "({u64 _val; struct pt_regs *_ctx = (struct pt_regs *)PT_REGS_PARM3(ctx);"
                         "  bpf_probe_read(&_val, sizeof(_val), &(PT_REGS_PARM3(_ctx))); _val;})",
-                "arg4": "({u64 _val; struct pt_regs *_ctx = PT_REGS_PARM4(ctx);"
+                "arg4": "({u64 _val; struct pt_regs *_ctx = (struct pt_regs *)PT_REGS_PARM4(ctx);"
                         "  bpf_probe_read(&_val, sizeof(_val), &(PT_REGS_PARM4(_ctx))); _val;})",
-                "arg5": "({u64 _val; struct pt_regs *_ctx = PT_REGS_PARM5(ctx);"
+                "arg5": "({u64 _val; struct pt_regs *_ctx = (struct pt_regs *)PT_REGS_PARM5(ctx);"
                         "  bpf_probe_read(&_val, sizeof(_val), &(PT_REGS_PARM5(_ctx))); _val;})",
-                "arg6": "({u64 _val; struct pt_regs *_ctx = PT_REGS_PARM6(ctx);"
+                "arg6": "({u64 _val; struct pt_regs *_ctx = (struct pt_regs *)PT_REGS_PARM6(ctx);"
                         "  bpf_probe_read(&_val, sizeof(_val), &(PT_REGS_PARM6(_ctx))); _val;})",
         }
 
@@ -271,17 +272,23 @@ static inline bool %s(char const *ignored, uintptr_t str) {
                         expr = expr.replace(alias, replacement)
                 for alias, replacement in Probe.aliases_common.items():
                     expr = expr.replace(alias, replacement)
-                matches = re.finditer('STRCMP\\(("[^"]+\\")', expr)
+                if self.bin_cmp:
+                    STRCMP_RE = 'STRCMP\\(\"([^"]+)\\"'
+                else:
+                    STRCMP_RE = 'STRCMP\\(("[^"]+\\")'
+                matches = re.finditer(STRCMP_RE, expr)
                 for match in matches:
                         string = match.group(1)
                         fname = self._generate_streq_function(string)
                         expr = expr.replace("STRCMP", fname, 1)
                 return expr
 
-        p_type = {"u": ct.c_uint, "d": ct.c_int,
+        p_type = {"u": ct.c_uint, "d": ct.c_int, "lu": ct.c_ulong,
+                  "ld": ct.c_long,
                   "llu": ct.c_ulonglong, "lld": ct.c_longlong,
                   "hu": ct.c_ushort, "hd": ct.c_short,
-                  "x": ct.c_uint, "llx": ct.c_ulonglong, "c": ct.c_ubyte,
+                  "x": ct.c_uint, "lx": ct.c_ulong, "llx": ct.c_ulonglong,
+                  "c": ct.c_ubyte,
                   "K": ct.c_ulonglong, "U": ct.c_ulonglong}
 
         def _generate_python_field_decl(self, idx, fields):
@@ -315,9 +322,11 @@ static inline bool %s(char const *ignored, uintptr_t str) {
                             dict(_fields_=fields))
 
         c_type = {"u": "unsigned int", "d": "int",
+                  "lu": "unsigned long", "ld": "long",
                   "llu": "unsigned long long", "lld": "long long",
                   "hu": "unsigned short", "hd": "short",
-                  "x": "unsigned int", "llx": "unsigned long long",
+                  "x": "unsigned int", "lx": "unsigned long",
+                  "llx": "unsigned long long",
                   "c": "char", "K": "unsigned long long",
                   "U": "unsigned long long"}
         fmt_types = c_type.keys()
@@ -385,9 +394,10 @@ BPF_PERF_OUTPUT(%s);
                 if field_type == "s":
                         return text + """
         if (%s != 0) {
-                bpf_probe_read(&__data.v%d, sizeof(__data.v%d), (void *)%s);
+                void *__tmp = (void *)%s;
+                bpf_probe_read(&__data.v%d, sizeof(__data.v%d), __tmp);
         }
-                """ % (expr, idx, idx, expr)
+                """ % (expr, expr, idx, idx)
                 if field_type in Probe.fmt_types:
                         return text + "        __data.v%d = (%s)%s;\n" % \
                                         (idx, Probe.c_type[field_type], expr)
@@ -548,7 +558,8 @@ BPF_PERF_OUTPUT(%s);
                 if Probe.print_cpu:
                     print("%-3s " % event.cpu, end="")
                 print("%-7d %-7d %-15s %-16s %s" %
-                      (event.tgid, event.pid, event.comm.decode(),
+                      (event.tgid, event.pid,
+                       event.comm.decode('utf-8', 'replace'),
                        self._display_function(), msg))
 
                 if self.kernel_stack:
@@ -680,6 +691,8 @@ trace -I 'linux/fs_struct.h' 'mntns_install "users = %d", $task->fs->users'
                   help="print time column")
                 parser.add_argument("-C", "--print_cpu", action="store_true",
                   help="print CPU id")
+                parser.add_argument("-B", "--bin_cmp", action="store_true",
+                  help="allow to use STRCMP with binary values")
                 parser.add_argument("-K", "--kernel-stack",
                   action="store_true", help="output kernel stack trace")
                 parser.add_argument("-U", "--user-stack",
